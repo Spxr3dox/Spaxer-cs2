@@ -209,7 +209,7 @@ static bool DoDump() {
     std::vector<Target> targets = {
         {"CCSPlayerController", {"m_hPlayerPawn", "m_bIsLocalPlayerController", "m_iszPlayerName"}},
         {"CBasePlayerController", {"m_bIsLocalPlayerController", "m_iszPlayerName"}},
-        {"C_BaseEntity", {"m_iHealth", "m_iTeamNum", "m_fFlags", "m_pGameSceneNode", "m_lifeState", "m_vecVelocity", "m_hOwnerEntity"}},
+        {"C_BaseEntity", {"m_iHealth", "m_iTeamNum", "m_fFlags", "m_pGameSceneNode", "m_lifeState", "m_vecVelocity", "m_hOwnerEntity", "m_fEffects"}},
         {"C_BasePlayerPawn", {"m_pWeaponServices", "m_pCameraServices", "m_pObserverServices", "m_bIsThirdPersonView"}},
         {"CPlayer_ObserverServices", {"m_hObserverTarget", "m_iObserverMode"}},
         {"C_PlantedC4", {"m_bBombTicking", "m_bBombDefused", "m_bBeingDefused", "m_nBombSite", "m_flTimerLength", "m_flDefuseLength", "m_flC4Blow", "m_flDefuseCountDown"}},
@@ -226,7 +226,7 @@ static bool DoDump() {
         {"CBasePlayerWeapon", {"m_iClip1", "m_pReserveAmmo"}},
         {"C_BasePlayerWeapon", {"m_iClip1", "m_pReserveAmmo"}},
         {"CCSPlayerBase_CameraServices", {"m_iFOV"}},
-        {"C_BaseModelEntity", {"m_Glow", "m_clrRender"}},
+        {"C_BaseModelEntity", {"m_Glow", "m_clrRender", "m_nRenderMode"}},
         {"CGlowProperty", {"m_iGlowType", "m_glowColorOverride", "m_bGlowing"}},
     };
 

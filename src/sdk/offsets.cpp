@@ -76,6 +76,8 @@ static void AssignKey(const std::string& key, uintptr_t value) {
     else if (key == "m_vSmokeColor")            m_vSmokeColor = value;
     else if (key == "m_Glow")                   m_Glow = value;
     else if (key == "m_clrRender")              m_clrRender = value;
+    else if (key == "m_nRenderMode")            m_nRenderMode = value;
+    else if (key == "m_fEffects")               m_fEffects = value;
     else if (key == "m_hOwnerEntity")           m_hOwnerEntity = value;
     else if (key == "m_bDormant")               m_bDormant = value;
     else if (key == "m_iGlowType")              m_iGlowType = value;
@@ -212,6 +214,8 @@ void ResetProcessState() {
     m_vSmokeColor = 0;
     m_Glow = 0;
     m_clrRender = 0;
+    m_nRenderMode = 0;
+    m_fEffects = 0;
     m_hOwnerEntity = 0;
     m_bDormant = 0;
     m_iGlowType = 0;

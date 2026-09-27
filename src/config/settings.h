@@ -125,6 +125,7 @@ struct Settings {
     uint32_t chams_team_rgba;
     uint32_t bind_chams;
     uint32_t chams_material;
+    uint32_t chams_hide_model;
 };
 
 namespace settings {

@@ -53,6 +53,8 @@ namespace off {
     inline uintptr_t m_vSmokeColor     = 0;
     inline uintptr_t m_Glow              = 0;
     inline uintptr_t m_clrRender         = 0;
+    inline uintptr_t m_nRenderMode       = 0;
+    inline uintptr_t m_fEffects          = 0;
     inline uintptr_t m_hOwnerEntity      = 0;
     inline uintptr_t m_bDormant          = 0;
     inline uintptr_t m_iGlowType         = 0;
