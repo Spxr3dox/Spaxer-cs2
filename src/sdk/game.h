@@ -118,9 +118,13 @@ inline bool DesignerName(uintptr_t entity, char* out, size_t size) {
     uintptr_t identity = g_proc.Read<uintptr_t>(entity + kEntityIdentity);
     if (!identity) return false;
     uintptr_t name = g_proc.Read<uintptr_t>(identity + kIdentityDesignerName);
-    if (!name || !g_proc.ReadBytes(name, out, size - 1)) return false;
-    out[size - 1] = 0;
-    return true;
+    if (!name) return false;
+    for (size_t length = size - 1; length >= 8; length /= 2) {
+        if (!g_proc.ReadBytes(name, out, length)) continue;
+        out[length] = 0;
+        return true;
+    }
+    return false;
 }
 
 inline bool DesignerNameIs(uintptr_t entity, const char* expected) {

@@ -5,6 +5,9 @@ GAME = os.path.expanduser("~/.local/share/Steam/steamapps/common/Counter-Strike 
 CLI = os.path.expanduser("~/.local/share/spaxer/tools/s2v/Source2Viewer-CLI")
 OUT = os.path.expanduser("~/.config/spaxer/maps")
 SEE_THROUGH = ("playerclip", "grenadeclip", "passbullets", "sky", "glass", "chainlink", "npcclip")
+GRENADE_PASS = ("playerclip", "npcclip")
+BLOCKS_SIGHT = 1
+BLOCKS_GRENADES = 2
 
 
 def node_matrix(node):
@@ -51,7 +54,7 @@ class Glb:
 
 def solid_triangles(glb):
     nodes = glb.json.get("nodes", [])
-    triangles, materials, names = [], [], []
+    triangles, materials, flags, names = [], [], [], []
 
     def material_index(name):
         if name not in names:
@@ -62,7 +65,9 @@ def solid_triangles(glb):
         node = nodes[index]
         world = parent @ node_matrix(node)
         name = node.get("name", "").lower()
-        if "mesh" in node and not any(tag in name for tag in SEE_THROUGH):
+        blocks = (0 if any(tag in name for tag in SEE_THROUGH) else BLOCKS_SIGHT) | \
+                 (0 if any(tag in name for tag in GRENADE_PASS) else BLOCKS_GRENADES)
+        if "mesh" in node and blocks:
             surface = str(node.get("extras", {}).get("SurfaceProperty") or "default").lower()
             for primitive in glb.json["meshes"][node["mesh"]]["primitives"]:
                 if primitive.get("mode", 4) != 4 or "indices" not in primitive:
@@ -74,6 +79,7 @@ def solid_triangles(glb):
                 batch = source[indices].reshape(-1, 9)
                 triangles.append(batch)
                 materials.append(np.full(len(batch), material_index(surface), np.uint8))
+                flags.append(np.full(len(batch), blocks, np.uint8))
         for child in node.get("children", []):
             visit(child, world)
 
@@ -81,8 +87,8 @@ def solid_triangles(glb):
         for root in scene.get("nodes", []):
             visit(root, np.eye(4))
     if not triangles:
-        return np.zeros((0, 9), np.float32), np.zeros(0, np.uint8), names
-    return np.concatenate(triangles).astype(np.float32), np.concatenate(materials), names
+        return np.zeros((0, 9), np.float32), np.zeros(0, np.uint8), np.zeros(0, np.uint8), names
+    return np.concatenate(triangles).astype(np.float32), np.concatenate(materials), np.concatenate(flags), names
 
 
 def export_sun(map_name, vpk, workdir):
@@ -120,16 +126,17 @@ def convert(map_name, sun_only=False):
         if not found:
             print(f"{map_name}: no physics")
             return
-        triangles, materials, names = solid_triangles(Glb(found[0]))
+        triangles, materials, flags, names = solid_triangles(Glb(found[0]))
     os.makedirs(OUT, exist_ok=True)
     with open(os.path.join(OUT, map_name + ".smap"), "wb") as f:
-        f.write(b"SMAP" + struct.pack("<II", 2, len(names)))
+        f.write(b"SMAP" + struct.pack("<II", 3, len(names)))
         for name in names:
             encoded = name.encode()[:255]
             f.write(struct.pack("<B", len(encoded)) + encoded)
         f.write(struct.pack("<I", len(triangles)))
         f.write(triangles.tobytes())
         f.write(materials.tobytes())
+        f.write(flags.tobytes())
     print(f"{map_name}: {len(triangles)} triangles")
 
 

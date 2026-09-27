@@ -27,6 +27,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr int kLeafSize = 4;
+constexpr uint8_t kSight = static_cast<uint8_t>(Blocks::Sight);
 constexpr int kMaxPenetrations = 4;
 constexpr float kMaxWallThickness = 90.f;
 constexpr float kDamageLostPerWall = 0.16f;
@@ -63,7 +64,7 @@ public:
         char magic[4];
         uint32_t version = 0, material_count = 0, count = 0;
         bool ok = fread(magic, 1, 4, f) == 4 && memcmp(magic, "SMAP", 4) == 0 &&
-                  fread(&version, 4, 1, f) == 1 && version == 2 && fread(&material_count, 4, 1, f) == 1;
+                  fread(&version, 4, 1, f) == 1 && version == 3 && fread(&material_count, 4, 1, f) == 1;
         for (uint32_t i = 0; ok && i < material_count; i++) {
             uint8_t length = 0;
             char name[256]{};
@@ -73,8 +74,9 @@ public:
         ok = ok && fread(&count, 4, 1, f) == 1;
         std::vector<std::array<float, 9>> raw(ok ? count : 0);
         std::vector<uint8_t> raw_materials(ok ? count : 0);
+        std::vector<uint8_t> raw_flags(ok ? count : 0);
         ok = ok && fread(raw.data(), sizeof(float) * 9, count, f) == count &&
-             fread(raw_materials.data(), 1, count, f) == count;
+             fread(raw_materials.data(), 1, count, f) == count && fread(raw_flags.data(), 1, count, f) == count;
         fclose(f);
         if (!ok || raw.empty()) return false;
 
@@ -99,8 +101,10 @@ public:
 
         std::vector<Triangle> sorted(triangles_.size());
         materials_.resize(triangles_.size());
+        flags_.resize(triangles_.size());
         for (size_t i = 0; i < order_.size(); i++) {
             sorted[i] = triangles_[order_[i]];
+            flags_[i] = raw_flags[order_[i]];
             materials_[i] = raw_materials[order_[i]] < modifiers_.size() ? raw_materials[order_[i]] : 0;
         }
         triangles_ = std::move(sorted);
@@ -111,14 +115,14 @@ public:
 
     bool Blocked(const Vec3& from, const Vec3& to) const {
         bool blocked = false;
-        Traverse(from, to, [&](uint32_t, float, bool) { blocked = true; return false; });
+        Traverse(from, to, kSight, [&](uint32_t, float, bool) { blocked = true; return false; });
         return blocked;
     }
 
-    bool Nearest(const Vec3& from, const Vec3& to, float& fraction, Vec3* normal = nullptr) const {
+    bool Nearest(const Vec3& from, const Vec3& to, uint8_t mask, float& fraction, Vec3* normal) const {
         fraction = 2.f;
         uint32_t nearest = 0;
-        Traverse(from, to, [&](uint32_t index, float t, bool) {
+        Traverse(from, to, mask, [&](uint32_t index, float t, bool) {
             if (t < fraction) {
                 fraction = t;
                 nearest = index;
@@ -142,7 +146,7 @@ public:
     float Damage(const Vec3& from, const Vec3& to, const Ballistics& weapon) const {
         struct Hit { float t; bool entering; uint8_t material; };
         std::vector<Hit> hits;
-        Traverse(from, to, [&](uint32_t index, float t, bool entering) {
+        Traverse(from, to, kSight, [&](uint32_t index, float t, bool entering) {
             hits.push_back({t, entering, materials_[index]});
             return true;
         });
@@ -226,7 +230,7 @@ private:
     }
 
     template <typename Visitor>
-    void Traverse(const Vec3& from, const Vec3& to, Visitor&& visit) const {
+    void Traverse(const Vec3& from, const Vec3& to, uint8_t mask, Visitor&& visit) const {
         float origin[3] = {from.x, from.y, from.z};
         float dir[3] = {to.x - from.x, to.y - from.y, to.z - from.z};
         float inv[3];
@@ -239,6 +243,7 @@ private:
             if (!HitsBox(node, origin, inv)) continue;
             if (node.count) {
                 for (uint32_t i = node.first; i < node.first + node.count; i++) {
+                    if (!(flags_[i] & mask)) continue;
                     float t;
                     bool entering;
                     if (HitsTriangle(triangles_[i], origin, dir, t, entering) && !visit(i, t, entering)) return;
@@ -272,6 +277,7 @@ private:
 
     std::vector<Triangle> triangles_;
     std::vector<uint8_t> materials_;
+    std::vector<uint8_t> flags_;
     std::vector<float> modifiers_;
     std::vector<Node> nodes_;
     std::vector<uint32_t> order_;
@@ -455,14 +461,14 @@ float DamageAt(const Vec3& from, const Vec3& to, const Ballistics& weapon) {
 
 namespace vis {
 
-bool Raycast(const Vec3& from, const Vec3& to, Vec3& hit, Vec3* normal) {
+bool Raycast(const Vec3& from, const Vec3& to, Vec3& hit, Vec3* normal, Blocks blocks) {
     std::shared_ptr<const Collision> collision;
     {
         std::lock_guard<std::mutex> lock(s_mutex);
         collision = s_collision;
     }
     float fraction;
-    if (!collision || !collision->Nearest(from, to, fraction, normal)) return false;
+    if (!collision || !collision->Nearest(from, to, static_cast<uint8_t>(blocks), fraction, normal)) return false;
     hit = {from.x + (to.x - from.x) * fraction, from.y + (to.y - from.y) * fraction, from.z + (to.z - from.z) * fraction};
     return true;
 }

@@ -738,6 +738,7 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(tb), MakeRow("Crouch fire",    &g_cfg->trigger_shift_fire,      nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeRow("Flash check",    &g_cfg->trigger_flash_check,     nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeRow("Autowall",       &g_cfg->autowall,                nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(tb), MakeRow("Auto stop",      &g_cfg->trigger_autostop,        nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeSliderRow("Min damage", &g_cfg->autowall_min_damage, 1, 100, 1), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeSliderRow("Hitchance",  &g_cfg->trigger_hitchance, 0, 100, 1), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeSliderRow("Delay (ms)", &g_cfg->trigger_delay_ms, 0, 500, 5), FALSE, FALSE, 0);
@@ -777,7 +778,9 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Player weapon",      &g_cfg->esp_weapon,          nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Skeleton",           &g_cfg->esp_skeleton,        nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Head circle",        &g_cfg->esp_head_circle,     nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(esp), MakeRow("Grenade Trajectory", &g_cfg->grenade_trajectory,  nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(esp), MakeRow("Flags (flashed, bomb, kit…)", &g_cfg->esp_flags, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(esp), MakeRow("My grenade prediction", &g_cfg->grenade_trajectory,  nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(esp), MakeRow("Thrown grenades (all)", &g_cfg->grenade_world,  nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(box), esp, FALSE, FALSE, 0);
 
         GtkWidget* sound = MakeCard("SOUND ESP");

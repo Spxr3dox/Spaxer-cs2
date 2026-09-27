@@ -78,6 +78,14 @@ static const OffsetEntry kOffsetTable[] = {
     {"m_vecVelocity", &m_vecVelocity},
     {"m_bDidSmokeEffect", &m_bDidSmokeEffect},
     {"m_vSmokeColor", &m_vSmokeColor},
+    {"m_hThrower", &m_hThrower},
+    {"m_bIsDefusing", &m_bIsDefusing},
+    {"m_ArmorValue", &m_ArmorValue},
+    {"m_pItemServices", &m_pItemServices},
+    {"m_bHasDefuser", &m_bHasDefuser},
+    {"m_bHasHelmet", &m_bHasHelmet},
+    {"m_bInReload", &m_bInReload},
+    {"m_fAccuracyPenalty", &m_fAccuracyPenalty},
     {"m_flThrowStrength", &m_flThrowStrength},
     {"m_bPinPulled", &m_bPinPulled},
     {"m_nSmokeEffectTickBegin", &m_nSmokeEffectTickBegin},
@@ -251,6 +259,14 @@ void ResetProcessState() {
     m_vecVelocity = 0;
     m_bDidSmokeEffect = 0;
     m_vSmokeColor = 0;
+    m_hThrower = 0;
+    m_bIsDefusing = 0;
+    m_ArmorValue = 0;
+    m_pItemServices = 0;
+    m_bHasDefuser = 0;
+    m_bHasHelmet = 0;
+    m_bInReload = 0;
+    m_fAccuracyPenalty = 0;
     m_flThrowStrength = 0;
     m_bPinPulled = 0;
     m_nSmokeEffectTickBegin = 0;

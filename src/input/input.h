@@ -38,6 +38,8 @@ private:
     std::atomic<bool> m_virtual_space{false};
     std::atomic<bool> m_virtual_a{false};
     std::atomic<bool> m_virtual_d{false};
+    std::atomic<bool> m_virtual_w{false};
+    std::atomic<bool> m_virtual_s{false};
 };
 
 extern Input g_input;

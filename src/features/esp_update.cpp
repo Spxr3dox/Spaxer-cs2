@@ -1,4 +1,7 @@
 #include "state.h"
+#include <algorithm>
+#include <chrono>
+#include <unordered_map>
 #include "sdk/game.h"
 #include "memory/process.h"
 #include "sdk/offsets.h"
@@ -169,6 +172,80 @@ static void UpdateSpectators(uintptr_t list, uintptr_t local_pawn) {
     g_hud.spectators.swap(out);
 }
 
+static double NowSeconds() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static bool GrenadeKindFor(const char* name, GrenadeKind& kind) {
+    if (!strcmp(name, "hegrenade_projectile")) kind = GrenadeKind::He;
+    else if (!strcmp(name, "flashbang_projectile")) kind = GrenadeKind::Flash;
+    else if (!strcmp(name, "smokegrenade_projectile")) kind = GrenadeKind::Smoke;
+    else if (!strcmp(name, "molotov_projectile") || !strcmp(name, "incendiary_projectile")) kind = GrenadeKind::Fire;
+    else if (!strcmp(name, "decoy_projectile")) kind = GrenadeKind::Decoy;
+    else return false;
+    return true;
+}
+
+static int ScanWorldObjects(uintptr_t list) {
+    static std::unordered_map<uintptr_t, double> first_seen;
+    int bomb_carrier = -1;
+    std::vector<ThrownGrenade> grenades;
+    double now = NowSeconds();
+    char name[40];
+    for (int i = 65; i < 2048; i++) {
+        uintptr_t entity = game::EntityFromList(list, i);
+        if (!entity || !game::DesignerName(entity, name, sizeof(name))) continue;
+        if (!strcmp(name, "weapon_c4")) {
+            uint32_t owner = off::m_hOwnerEntity ? g_proc.Read<uint32_t>(entity + off::m_hOwnerEntity) : 0xFFFFFFFF;
+            if (owner && owner != 0xFFFFFFFF) bomb_carrier = static_cast<int>(owner & 0x7FFF);
+            continue;
+        }
+        GrenadeKind kind;
+        if (!GrenadeKindFor(name, kind)) continue;
+        int team = 0;
+        if (off::m_hThrower) {
+            uint32_t thrower = g_proc.Read<uint32_t>(entity + off::m_hThrower);
+            uintptr_t pawn = thrower && thrower != 0xFFFFFFFF ? game::EntityFromList(list, thrower & 0x7FFF) : 0;
+            team = pawn ? game::Team(pawn) : 0;
+        }
+        auto [it, inserted] = first_seen.try_emplace(entity, now);
+        grenades.push_back({entity, kind, team, it->second});
+    }
+    std::erase_if(first_seen, [&](const auto& entry) {
+        return std::none_of(grenades.begin(), grenades.end(), [&](const ThrownGrenade& g) { return g.entity == entry.first; });
+    });
+    std::lock_guard<std::mutex> lock(g_hud.grenades_mtx);
+    g_hud.thrown_grenades.swap(grenades);
+    return bomb_carrier;
+}
+
+static uint32_t ReadFlags(uintptr_t list, uintptr_t pawn, bool has_bomb) {
+    struct FlashState { float duration = 0.f; double until = 0.0; };
+    static std::unordered_map<uintptr_t, FlashState> flashes;
+    uint32_t flags = has_bomb ? kFlagBomb : 0u;
+    double now = NowSeconds();
+    if (off::m_flFlashDuration) {
+        float duration = g_proc.Read<float>(pawn + off::m_flFlashDuration);
+        FlashState& state = flashes[pawn];
+        if (duration > 0.1f && std::fabs(duration - state.duration) > 0.01f) state.until = now + duration;
+        state.duration = duration;
+        if (now < state.until) flags |= kFlagFlashed;
+    }
+    if (off::m_bIsScoped && g_proc.Read<bool>(pawn + off::m_bIsScoped)) flags |= kFlagScoped;
+    if (off::m_bIsDefusing && g_proc.Read<bool>(pawn + off::m_bIsDefusing)) flags |= kFlagDefusing;
+    if (off::m_ArmorValue && g_proc.Read<int>(pawn + off::m_ArmorValue) > 0) flags |= kFlagArmor;
+    if (off::m_pItemServices) {
+        uintptr_t items = g_proc.Read<uintptr_t>(pawn + off::m_pItemServices);
+        if (items && off::m_bHasHelmet && g_proc.Read<bool>(items + off::m_bHasHelmet)) flags |= kFlagHelmet;
+        if (items && off::m_bHasDefuser && g_proc.Read<bool>(items + off::m_bHasDefuser)) flags |= kFlagKit;
+    }
+    if (off::m_bInReload) {
+        uintptr_t weapon = game::ActiveWeapon(pawn);
+        if (weapon && g_proc.Read<bool>(weapon + off::m_bInReload)) flags |= kFlagReloading;
+    }
+    return flags;
+}
+
 void UpdateEsp() {
     if (!g_hud.attached.load() || !off::g_OffsetsReady.load()) {
         ClearEsp();
@@ -191,6 +268,8 @@ void UpdateEsp() {
     int my_team = 0;
     if (local_pawn) my_team = game::Team(local_pawn);
     g_hud.local_team.store(my_team);
+
+    int bomb_carrier = ScanWorldObjects(list);
 
     for (int i = 1; i <= 64; i++) {
         uintptr_t ctrl = game::EntityFromList(list, i);
@@ -226,6 +305,7 @@ void UpdateEsp() {
         ReadPlayerName(ctrl, e.name);
         ReadWeapon(list, pawn, e.weapon);
         e.pawn = pawn;
+        e.flags = ReadFlags(list, pawn, static_cast<int>(ph & 0x7FFF) == bomb_carrier);
         ReadModelStem(sn, e.model);
         out.push_back(e);
         if (out.size() >= 32) break;

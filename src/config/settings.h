@@ -155,6 +155,9 @@ struct Settings {
     uint32_t ambient_tint_rgba;
     int32_t  world_brightness;
     int32_t  smoke_color_strength;
+    uint32_t esp_flags;
+    uint32_t trigger_autostop;
+    uint32_t grenade_world;
 };
 
 namespace settings {

@@ -9,10 +9,19 @@
 #include <cmath>
 #include <chrono>
 #include <algorithm>
+#include <linux/input.h>
+#include <vector>
 
 namespace features {
 
 static std::atomic<bool> s_running{false};
+
+constexpr float kAccurateSpeedFraction = 0.34f;
+constexpr float kUnscopedSniperPenalty = 0.08f;
+constexpr int kHitChanceSamples = 64;
+constexpr float kGoldenAngle = 2.39996323f;
+constexpr float kCounterThreshold = 15.f;
+constexpr auto kAutoStopLimit = std::chrono::milliseconds(150);
 static std::thread s_thread;
 
 static inline float NormAngle(float a) {
@@ -143,6 +152,116 @@ static float ClosestOnSegment(float px, float py, float ax, float ay, float bx, 
     float cx = ax + dx * t - px, cy = ay + dy * t - py;
     distance = sqrtf(cx * cx + cy * cy);
     return t;
+}
+
+struct ProjectedCapsule { float ax, ay, bx, by, radius; };
+
+static bool ProjectHitboxes(uintptr_t local_pawn, uintptr_t target, float tolerance, std::vector<ProjectedCapsule>& out,
+                            float& aim_x, float& aim_y) {
+    ViewTangent view;
+    if (!off::m_modelState || !view.Load()) return false;
+    uintptr_t node = g_proc.Read<uintptr_t>(target + off::m_pGameSceneNode);
+    uintptr_t bones_array = node ? g_proc.Read<uintptr_t>(node + off::m_modelState + 0x80) : 0;
+    if (!bones_array) return false;
+    Vec3 bones[23];
+    Vec3 origin = game::Origin(target);
+    for (int i = 0; i < 23; i++) bones[i] = g_proc.Read<Vec3>(bones_array + static_cast<uintptr_t>(i) * 32);
+    if (!game::BoneNearOrigin(bones[7], origin)) return false;
+    Vec3 punch = off::m_aimPunchAngle ? g_proc.Read<Vec3>(local_pawn + off::m_aimPunchAngle) : Vec3{};
+    view.AimPoint(punch, aim_x, aim_y);
+    for (const HitCapsule& capsule : kHitCapsules) {
+        const Vec3& a = bones[capsule.from];
+        const Vec3& b = bones[capsule.to];
+        if (!game::BoneNearOrigin(a, origin) || !game::BoneNearOrigin(b, origin)) continue;
+        float ax, ay, a_depth, bx, by, b_depth;
+        if (!view.Project(a, ax, ay, a_depth) || !view.Project(b, bx, by, b_depth)) continue;
+        out.push_back({ax, ay, bx, by, capsule.radius * tolerance / std::max(a_depth, b_depth)});
+    }
+    return !out.empty();
+}
+
+struct WeaponAccuracy { float spread, crouch, stand, move, max_speed; };
+
+static WeaponAccuracy AccuracyFor(int definition) {
+    switch (definition) {
+        case 1: case 2: case 3: case 4: case 30: case 32: case 36: case 61: case 63: case 64:
+            return {2.0f, 4.0f, 6.0f, 30.f, 240.f};
+        case 17: case 19: case 23: case 24: case 26: case 33: case 34:
+            return {1.0f, 8.0f, 11.0f, 40.f, 230.f};
+        case 7: case 8: case 10: case 13: case 16: case 39: case 60:
+            return {0.6f, 4.8f, 6.4f, 150.f, 220.f};
+        case 9: case 11: case 38: case 40:
+            return {0.2f, 1.5f, 2.2f, 150.f, 200.f};
+        case 14: case 28:
+            return {2.0f, 6.0f, 8.0f, 150.f, 200.f};
+        case 25: case 27: case 29: case 35:
+            return {40.f, 8.0f, 10.0f, 20.f, 220.f};
+        default:
+            return {1.0f, 6.0f, 8.0f, 100.f, 220.f};
+    }
+}
+
+static float InaccuracyCone(uintptr_t pawn, int definition, bool scoped, bool sniper) {
+    WeaponAccuracy accuracy = AccuracyFor(definition);
+    bool crouched = off::m_fFlags && (g_proc.Read<uint32_t>(pawn + off::m_fFlags) & 2u);
+    Vec3 velocity = off::m_vecVelocity ? g_proc.Read<Vec3>(pawn + off::m_vecVelocity) : Vec3{};
+    float speed = std::hypot(velocity.x, velocity.y);
+    float move = std::clamp((speed - accuracy.max_speed * kAccurateSpeedFraction) / (accuracy.max_speed * (1.f - kAccurateSpeedFraction)), 0.f, 1.f);
+    float cone = (accuracy.spread + (crouched ? accuracy.crouch : accuracy.stand) + accuracy.move * move) / 1000.f;
+    if (sniper && !scoped) cone += kUnscopedSniperPenalty;
+    if (off::m_fAccuracyPenalty) {
+        uintptr_t weapon = game::ActiveWeapon(pawn);
+        float penalty = weapon ? g_proc.Read<float>(weapon + off::m_fAccuracyPenalty) : 0.f;
+        if (std::isfinite(penalty) && penalty > 0.f) cone += penalty;
+    }
+    return cone;
+}
+
+static int HitChancePercent(uintptr_t local_pawn, uintptr_t target, float cone, float tolerance) {
+    std::vector<ProjectedCapsule> capsules;
+    float aim_x, aim_y;
+    if (!ProjectHitboxes(local_pawn, target, tolerance, capsules, aim_x, aim_y)) return 100;
+    float spread = std::tan(cone);
+    int hits = 0;
+    for (int i = 0; i < kHitChanceSamples; i++) {
+        float radius = spread * std::sqrt((i + 0.5f) / kHitChanceSamples);
+        float angle = i * kGoldenAngle;
+        float px = aim_x + std::cos(angle) * radius, py = aim_y + std::sin(angle) * radius;
+        for (const ProjectedCapsule& capsule : capsules) {
+            float distance;
+            ClosestOnSegment(px, py, capsule.ax, capsule.ay, capsule.bx, capsule.by, distance);
+            if (distance < capsule.radius) {
+                hits++;
+                break;
+            }
+        }
+    }
+    return hits * 100 / kHitChanceSamples;
+}
+
+static void AutoStop(uintptr_t pawn, float stop_speed) {
+    ViewTangent view;
+    if (!view.Load()) return;
+    float fx = view.row[2][0], fy = view.row[2][1];
+    float flat = std::hypot(fx, fy);
+    if (flat < 1e-3f) return;
+    fx /= flat; fy /= flat;
+    Vec3 velocity = g_proc.Read<Vec3>(pawn + off::m_vecVelocity);
+    float forward_speed = velocity.x * fx + velocity.y * fy;
+    float side_speed = velocity.x * fy - velocity.y * fx;
+    int side_key = side_speed > kCounterThreshold ? KEY_A : side_speed < -kCounterThreshold ? KEY_D : 0;
+    int forward_key = forward_speed > kCounterThreshold ? KEY_S : forward_speed < -kCounterThreshold ? KEY_W : 0;
+    if (!side_key && !forward_key) return;
+    if (side_key) g_input.SetVirtualKey(side_key, true);
+    if (forward_key) g_input.SetVirtualKey(forward_key, true);
+    auto deadline = std::chrono::steady_clock::now() + kAutoStopLimit;
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+        Vec3 now = g_proc.Read<Vec3>(pawn + off::m_vecVelocity);
+        if (std::hypot(now.x, now.y) <= stop_speed) break;
+    }
+    if (side_key) g_input.SetVirtualKey(side_key, false);
+    if (forward_key) g_input.SetVirtualKey(forward_key, false);
 }
 
 static CrosshairHit HitboxUnderCrosshair(uintptr_t local_pawn, uintptr_t target, float tolerance) {
@@ -306,29 +425,28 @@ static void Loop() {
             if (nowIdx != entIdx) { aim.aimFrames = 0; continue; }
         }
 
+        bool on_ground = !off::m_fFlags || (g_proc.Read<uint32_t>(pawn + off::m_fFlags) & 1u);
+        if (!on_ground) { aim.aimFrames = 0; continue; }
         if (off::m_vecVelocity) {
             Vec3 v = g_proc.Read<Vec3>(pawn + off::m_vecVelocity);
-            float speed = sqrtf(v.x*v.x + v.y*v.y);
-            bool onGround = true;
-            if (off::m_fFlags) onGround = (g_proc.Read<uint32_t>(pawn + off::m_fFlags) & 1) != 0;
-            float max_speed = is_sniper ? 5.0f : 34.0f;
-            if (speed > max_speed || !onGround) {
+            float stop_speed = AccuracyFor(def_idx).max_speed * kAccurateSpeedFraction;
+            if (std::hypot(v.x, v.y) > stop_speed) {
+                if (settings::Enabled(cfg->trigger_autostop)) AutoStop(pawn, stop_speed);
                 aim.aimFrames = 0;
                 continue;
             }
         }
 
-        int shots = off::m_iShotsFired ? g_proc.Read<int>(pawn + off::m_iShotsFired) : 0;
         if (is_sniper) {
+            int shots = off::m_iShotsFired ? g_proc.Read<int>(pawn + off::m_iShotsFired) : 0;
             if (shots != 0) { aim.aimFrames = 0; continue; }
             if (IsSniper(def_idx) && !is_scoped) { aim.aimFrames = 0; continue; }
             if (clock::now() - scoped_since < std::chrono::milliseconds(120)) { aim.aimFrames = 0; continue; }
-        } else {
-            float recoil_score = shots <= 1 ? 1.f : 1.f - (shots - 1) * 0.25f;
-            if (recoil_score < 0.f) recoil_score = 0.f;
-            int chance = (int)(recoil_score * 100.f);
-            int hitchance = weapon ? weapon->trigger_hitchance : cfg->trigger_hitchance;
-            if (chance < hitchance) { aim.aimFrames = 0; continue; }
+        }
+        int hitchance = weapon ? weapon->trigger_hitchance : cfg->trigger_hitchance;
+        if (hitchance > 0) {
+            float cone = InaccuracyCone(pawn, def_idx, is_scoped, IsSniper(def_idx));
+            if (HitChancePercent(pawn, target, cone, is_sniper ? 0.85f : 1.0f) < hitchance) { aim.aimFrames = 0; continue; }
         }
 
         if (off::m_aimPunchAngle) {

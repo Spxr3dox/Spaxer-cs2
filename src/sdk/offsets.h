@@ -52,6 +52,14 @@ namespace off {
     inline uintptr_t m_vecVelocity     = 0;
     inline uintptr_t m_bDidSmokeEffect = 0;
     inline uintptr_t m_vSmokeColor     = 0;
+    inline uintptr_t m_hThrower = 0;
+    inline uintptr_t m_bIsDefusing = 0;
+    inline uintptr_t m_ArmorValue = 0;
+    inline uintptr_t m_pItemServices = 0;
+    inline uintptr_t m_bHasDefuser = 0;
+    inline uintptr_t m_bHasHelmet = 0;
+    inline uintptr_t m_bInReload = 0;
+    inline uintptr_t m_fAccuracyPenalty = 0;
     inline uintptr_t m_flThrowStrength = 0;
     inline uintptr_t m_bPinPulled = 0;
     inline uintptr_t m_nSmokeEffectTickBegin = 0;

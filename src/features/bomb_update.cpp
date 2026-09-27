@@ -43,7 +43,8 @@ void UpdateBomb() {
 
     bool ticking = g_proc.Read<bool>(bomb + off::m_bBombTicking);
     bool defused = g_proc.Read<bool>(bomb + off::m_bBombDefused);
-    if (defused || !ticking) {
+    float planted_blow = off::m_flC4Blow ? g_proc.Read<float>(bomb + off::m_flC4Blow) : 0.f;
+    if (defused || (!ticking && planted_blow <= 0.f)) {
         g_hud.bomb_visible.store(false);
         s_plant_anchor = 0.f; s_was_defusing = false;
         return;

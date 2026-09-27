@@ -231,6 +231,12 @@ static bool DoDump() {
         {"C_SmokeGrenadeProjectile", {"m_nSmokeEffectTickBegin", "m_bDidSmokeEffect", "m_vSmokeColor"}},
         {"C_PostProcessingVolume", {"m_flMinExposure", "m_flMaxExposure", "m_bExposureControl"}},
         {"C_BaseCSGrenade", {"m_flThrowStrength", "m_bPinPulled"}},
+        {"C_BaseGrenade", {"m_hThrower"}},
+        {"C_CSPlayerPawn", {"m_bIsDefusing", "m_ArmorValue"}},
+        {"C_CSPlayerPawnBase", {"m_bIsDefusing", "m_ArmorValue"}},
+        {"C_BasePlayerPawn", {"m_pItemServices"}},
+        {"CCSPlayer_ItemServices", {"m_bHasDefuser", "m_bHasHelmet"}},
+        {"C_CSWeaponBase", {"m_bInReload", "m_fAccuracyPenalty"}},
     };
 
     for (auto& t : targets) {

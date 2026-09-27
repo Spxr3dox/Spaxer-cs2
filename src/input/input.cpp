@@ -48,6 +48,8 @@ static int CreateKbd() {
     ioctl(fd, UI_SET_KEYBIT, KEY_LEFTSHIFT);
     ioctl(fd, UI_SET_KEYBIT, KEY_A);
     ioctl(fd, UI_SET_KEYBIT, KEY_D);
+    ioctl(fd, UI_SET_KEYBIT, KEY_W);
+    ioctl(fd, UI_SET_KEYBIT, KEY_S);
     ioctl(fd, UI_SET_KEYBIT, KEY_SPACE);
     ioctl(fd, UI_SET_EVBIT, EV_SYN);
     struct uinput_setup u{};
@@ -62,7 +64,7 @@ static int CreateKbd() {
 }
 
 void Input::Shutdown() {
-    for (int key_code : {KEY_SPACE, KEY_A, KEY_D})
+    for (int key_code : {KEY_SPACE, KEY_A, KEY_D, KEY_W, KEY_S})
         if (VirtualKeyState(key_code)->exchange(false)) FakeKey(key_code, false);
     if (s_kbd_fd >= 0) {
         input_event ev{}; ev.type = EV_KEY;
@@ -316,6 +318,8 @@ static KeySym KeySymFor(int key_code) {
         case KEY_SPACE: return XK_space;
         case KEY_A: return XK_a;
         case KEY_D: return XK_d;
+        case KEY_W: return XK_w;
+        case KEY_S: return XK_s;
         default: return NoSymbol;
     }
 }
@@ -353,6 +357,8 @@ std::atomic<bool>* Input::VirtualKeyState(int key_code) {
         case KEY_SPACE: return &m_virtual_space;
         case KEY_A: return &m_virtual_a;
         case KEY_D: return &m_virtual_d;
+        case KEY_W: return &m_virtual_w;
+        case KEY_S: return &m_virtual_s;
         default: return nullptr;
     }
 }

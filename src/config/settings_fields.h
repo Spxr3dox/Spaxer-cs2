@@ -123,4 +123,7 @@
     X(ambient_tint, Toggle) \
     X(ambient_tint_rgba, Color) \
     X(world_brightness, Number) \
-    X(smoke_color_strength, Number)
+    X(smoke_color_strength, Number) \
+    X(esp_flags, Toggle) \
+    X(trigger_autostop, Toggle) \
+    X(grenade_world, Toggle)

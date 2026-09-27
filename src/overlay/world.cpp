@@ -197,6 +197,28 @@ static void OutlinedText(cairo_t* cr, const char* text, double center_x, double 
     cairo_fill(cr);
 }
 
+static void DrawFlags(cairo_t* cr, uint32_t flags, double left, double top, double alpha) {
+    struct Tag { uint32_t bit; const char* text; Rgb color; };
+    static constexpr Tag kTags[] = {
+        {kFlagFlashed, "FLASHED", {1.0, 0.95, 0.4}},  {kFlagBomb, "C4", {1.0, 0.35, 0.3}},
+        {kFlagDefusing, "DEFUSING", {0.4, 0.8, 1.0}}, {kFlagKit, "KIT", {0.4, 0.8, 1.0}},
+        {kFlagScoped, "SCOPED", {0.9, 0.9, 0.95}},    {kFlagReloading, "RELOAD", {1.0, 0.7, 0.3}},
+    };
+    double y = top;
+    auto draw = [&](const char* text, Rgb color) {
+        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 9.0);
+        cairo_text_extents_t extents;
+        cairo_text_extents(cr, text, &extents);
+        OutlinedText(cr, text, left + extents.width * 0.5 + extents.x_bearing, y, 9.0, color, alpha, true);
+        y += 11.0;
+    };
+    if (flags & kFlagHelmet) draw("HK", {0.85, 0.87, 0.9});
+    else if (flags & kFlagArmor) draw("K", {0.85, 0.87, 0.9});
+    for (const Tag& tag : kTags)
+        if (flags & tag.bit) draw(tag.text, tag.color);
+}
+
 static Rgb HealthColor(float fraction) {
     fraction = std::clamp(fraction, 0.f, 1.f);
     if (fraction > 0.5f) {
@@ -345,6 +367,7 @@ void DrawEsp(cairo_t* cr, const render::Camera& camera, const std::vector<LivePl
             OutlinedText(cr, player.info.name, (box.left + box.right) * 0.5, box.top - 5.0, 12.0, {1, 1, 1}, alpha, true);
         if (settings::Enabled(settings.esp_weapon) && player.info.weapon[0])
             OutlinedText(cr, player.info.weapon, (box.left + box.right) * 0.5, box.bottom + 13.0, 10.0, {0.85, 0.87, 0.9}, alpha, false);
+        if (settings::Enabled(settings.esp_flags)) DrawFlags(cr, player.info.flags, box.right + 5.0, box.top + 9.0, alpha);
     }
     for (auto it = animations.begin(); it != animations.end();) {
         if (now - it->second.seen > std::chrono::milliseconds(500)) it = animations.erase(it);

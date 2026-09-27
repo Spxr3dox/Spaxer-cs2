@@ -15,6 +15,27 @@ struct EspEntry {
     char  model[40];
     char  name[32];
     char  weapon[24];
+    uint32_t flags;
+};
+
+enum EspFlag : uint32_t {
+    kFlagFlashed = 1u << 0,
+    kFlagBomb = 1u << 1,
+    kFlagDefusing = 1u << 2,
+    kFlagKit = 1u << 3,
+    kFlagScoped = 1u << 4,
+    kFlagReloading = 1u << 5,
+    kFlagArmor = 1u << 6,
+    kFlagHelmet = 1u << 7,
+};
+
+enum class GrenadeKind : int { He, Flash, Smoke, Fire, Decoy };
+
+struct ThrownGrenade {
+    uintptr_t entity;
+    GrenadeKind kind;
+    int team;
+    double seen_at;
 };
 
 struct SpectatorEntry {
@@ -51,6 +72,9 @@ struct HudState {
 
     std::mutex                   items_mtx;
     std::vector<DroppedItemEntry> dropped_items;
+
+    std::mutex                 grenades_mtx;
+    std::vector<ThrownGrenade> thrown_grenades;
 
 };
 

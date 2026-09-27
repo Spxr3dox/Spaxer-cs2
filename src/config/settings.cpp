@@ -26,7 +26,7 @@ const char* Path() {
     return s_path;
 }
 
-static constexpr uint32_t kMigrationLevel = 8;
+static constexpr uint32_t kMigrationLevel = 9;
 
 static void DefaultEspExtras(Settings& s) {
     s.sound_esp_rgba = 0x00CCFFC0;
@@ -61,6 +61,10 @@ static void Migrate(Settings& s) {
     if (s.migration_level < 6) s.weather_density = 60;
     if (s.migration_level < 7) DefaultWorld(s);
     if (s.migration_level < 8) s.smoke_color_strength = 100;
+    if (s.migration_level < 9) {
+        s.esp_flags = 1;
+        s.grenade_world = 1;
+    }
     s.migration_level = kMigrationLevel;
 }
 
@@ -178,6 +182,9 @@ void Defaults(Settings& s) {
     s.weather_density = 60;
     DefaultWorld(s);
     s.smoke_color_strength = 100;
+    s.esp_flags = 1;
+    s.trigger_autostop = 0;
+    s.grenade_world = 1;
     s.migration_level = kMigrationLevel;
 }
 
