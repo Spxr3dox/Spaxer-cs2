@@ -15,6 +15,7 @@ namespace nightsky {
 
 namespace {
 
+constexpr auto kMaskInterval = std::chrono::milliseconds(50);
 constexpr int kMaskWidth = 128;
 constexpr int kMaskHeight = 72;
 constexpr float kRayLength = 16000.f;
@@ -24,7 +25,8 @@ constexpr float kPi = 3.14159265f;
 constexpr float kMoonYaw = 35.f * kPi / 180.f;
 constexpr float kMoonElevation = 32.f * kPi / 180.f;
 constexpr float kMoonAngularRadius = 1.4f * kPi / 180.f;
-constexpr float kSunCoverAngularRadius = 9.f * kPi / 180.f;
+constexpr float kHaloScale = 2.5f;
+constexpr float kSunCoverAngularRadius = 3.6f * kPi / 180.f;
 
 struct Star { Vec3 dir; float size; float brightness; float phase; float rate; float warmth; };
 
@@ -85,6 +87,7 @@ private:
                     directions[y * kMaskWidth + x] = {d.x / length, d.y / length, d.z / length};
                 }
             }
+            auto started = std::chrono::steady_clock::now();
             if (!vis::CastBatch(camera.eye, directions.data(), directions.size(), kRayLength, blocked.data())) continue;
             Mask mask;
             mask.stride = cairo_format_stride_for_width(CAIRO_FORMAT_A8, kMaskWidth);
@@ -94,8 +97,11 @@ private:
                     if (!blocked[y * kMaskWidth + x] && directions[y * kMaskWidth + x].z > -0.05f)
                         mask.pixels[y * mask.stride + x] = 255;
             mask.valid = true;
-            std::lock_guard<std::mutex> lock(mutex_);
-            ready_ = std::move(mask);
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                ready_ = std::move(mask);
+            }
+            std::this_thread::sleep_until(started + kMaskInterval);
         }
     }
 
@@ -156,30 +162,25 @@ void PaintStars(cairo_t* cr, const render::Camera& camera, const Mask& mask, flo
     }
 }
 
-void PaintMoon(cairo_t* cr, const render::Camera& camera, const Mask& mask) {
+bool PaintMoon(cairo_t* cr, const render::Camera& camera, const Mask& mask, double* bounds) {
     Vec3 moon_dir{std::cos(kMoonElevation) * std::cos(kMoonYaw), std::cos(kMoonElevation) * std::sin(kMoonYaw),
                   std::sin(kMoonElevation)};
     bool covers_sun = vis::SunDirection(moon_dir);
     float mx, my;
-    if (!camera.Project(Far(camera.eye, moon_dir), mx, my)) return;
-    if (mx < -camera.width * 0.2f || my < -camera.height * 0.2f || mx > camera.width * 1.2f || my > camera.height * 1.2f) return;
-    if (!covers_sun && !IsOpenSky(mask, camera, mx, my)) return;
-    float radius = std::tan(kMoonAngularRadius) / camera.tan_half_h * camera.width * 0.5f;
-    if (covers_sun) {
-        float cover = std::tan(kSunCoverAngularRadius) / camera.tan_half_h * camera.width * 0.5f;
-        cairo_pattern_t* shade = cairo_pattern_create_radial(mx, my, cover * 0.45f, mx, my, cover);
-        cairo_pattern_add_color_stop_rgba(shade, 0, 0.012, 0.02, 0.05, 1.0);
-        cairo_pattern_add_color_stop_rgba(shade, 1, 0.012, 0.02, 0.05, 0.0);
-        cairo_set_source(cr, shade);
-        cairo_arc(cr, mx, my, cover, 0, 2 * kPi);
-        cairo_fill(cr);
-        cairo_pattern_destroy(shade);
+    if (!camera.Project(Far(camera.eye, moon_dir), mx, my)) return false;
+    if (mx < -camera.width * 0.2f || my < -camera.height * 0.2f || mx > camera.width * 1.2f || my > camera.height * 1.2f) return false;
+    float angular = covers_sun ? kSunCoverAngularRadius : kMoonAngularRadius;
+    float radius = std::tan(angular) / camera.tan_half_h * camera.width * 0.5f;
+    if (!cr) {
+        bounds[0] = mx - radius * kHaloScale; bounds[1] = my - radius * kHaloScale;
+        bounds[2] = radius * kHaloScale * 2.f; bounds[3] = radius * kHaloScale * 2.f;
+        return true;
     }
-    cairo_pattern_t* halo = cairo_pattern_create_radial(mx, my, radius * 0.9f, mx, my, radius * 5.f);
+    cairo_pattern_t* halo = cairo_pattern_create_radial(mx, my, radius * 0.9f, mx, my, radius * kHaloScale);
     cairo_pattern_add_color_stop_rgba(halo, 0, 0.75, 0.82, 1.0, 0.18);
     cairo_pattern_add_color_stop_rgba(halo, 1, 0.75, 0.82, 1.0, 0.0);
     cairo_set_source(cr, halo);
-    cairo_arc(cr, mx, my, radius * 5.f, 0, 2 * kPi);
+    cairo_arc(cr, mx, my, radius * kHaloScale, 0, 2 * kPi);
     cairo_fill(cr);
     cairo_pattern_destroy(halo);
     cairo_pattern_t* disc = cairo_pattern_create_radial(mx - radius * 0.3f, my - radius * 0.3f, 0, mx, my, radius);
@@ -195,8 +196,50 @@ void PaintMoon(cairo_t* cr, const render::Camera& camera, const Mask& mask) {
         cairo_arc(cr, mx + crater[0] * radius, my + crater[1] * radius, crater[2] * radius, 0, 2 * kPi);
         cairo_fill(cr);
     }
+    return true;
 }
 
+}
+
+static void PaintMaskedMoon(cairo_t* cr, const render::Camera& camera, Mask& mask) {
+    double bounds[4];
+    if (!PaintMoon(nullptr, camera, mask, bounds)) return;
+    double cx = bounds[0] + bounds[2] * 0.5, cy = bounds[1] + bounds[3] * 0.5, reach = bounds[2] * 0.5 / kHaloScale * 1.1;
+    int open = 0, samples = 0;
+    for (int k = 0; k <= 16; k++) {
+        double angle = k * kPi / 8.0;
+        double px = k == 16 ? cx : cx + std::cos(angle) * reach, py = k == 16 ? cy : cy + std::sin(angle) * reach;
+        int mx = static_cast<int>(px / camera.width * kMaskWidth), my = static_cast<int>(py / camera.height * kMaskHeight);
+        if (mx < 0 || my < 0 || mx >= kMaskWidth || my >= kMaskHeight) continue;
+        samples++;
+        open += mask.pixels[my * mask.stride + mx] ? 1 : 0;
+    }
+    if (samples == 0 || open == 0) return;
+    if (open == samples) {
+        PaintMoon(cr, camera, mask, bounds);
+        return;
+    }
+    cairo_save(cr);
+    cairo_rectangle(cr, bounds[0], bounds[1], bounds[2], bounds[3]);
+    cairo_clip(cr);
+    cairo_push_group(cr);
+    PaintMoon(cr, camera, mask, bounds);
+    cairo_pattern_t* moon = cairo_pop_group(cr);
+    cairo_surface_t* mask_surface = cairo_image_surface_create_for_data(mask.pixels.data(), CAIRO_FORMAT_A8, kMaskWidth,
+                                                                        kMaskHeight, mask.stride);
+    cairo_pattern_t* mask_pattern = cairo_pattern_create_for_surface(mask_surface);
+    cairo_matrix_t scale;
+    cairo_matrix_init_scale(&scale, static_cast<double>(kMaskWidth) / camera.width,
+                            static_cast<double>(kMaskHeight) / camera.height);
+    cairo_pattern_set_matrix(mask_pattern, &scale);
+    cairo_pattern_set_filter(mask_pattern, CAIRO_FILTER_BILINEAR);
+    cairo_pattern_set_extend(mask_pattern, CAIRO_EXTEND_PAD);
+    cairo_set_source(cr, moon);
+    cairo_mask(cr, mask_pattern);
+    cairo_pattern_destroy(mask_pattern);
+    cairo_surface_destroy(mask_surface);
+    cairo_pattern_destroy(moon);
+    cairo_restore(cr);
 }
 
 void Draw(cairo_t* cr, const render::Camera& camera, const Settings& settings) {
@@ -209,7 +252,7 @@ void Draw(cairo_t* cr, const render::Camera& camera, const Settings& settings) {
 
     cairo_save(cr);
     PaintStars(cr, camera, mask, time);
-    PaintMoon(cr, camera, mask);
+    PaintMaskedMoon(cr, camera, mask);
     cairo_restore(cr);
 }
 
