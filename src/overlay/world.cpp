@@ -29,6 +29,10 @@ bool LivePlayer::Bone(int index, Vec3& out) const {
     return std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.z) && Distance(out, origin) < 110.f;
 }
 
+static void Advance(Vec3& point, const Vec3& shift) {
+    point.x += shift.x; point.y += shift.y; point.z += shift.z;
+}
+
 std::vector<LivePlayer> CapturePlayers(const Settings& settings) {
     std::vector<EspEntry> entries;
     {
@@ -36,6 +40,7 @@ std::vector<LivePlayer> CapturePlayers(const Settings& settings) {
         entries = g_hud.esp_players;
     }
     bool want_models = settings::Enabled(settings.chams);
+    float lead_seconds = std::clamp(settings.render_lead_ms, 0, 200) / 1000.f;
     std::vector<LivePlayer> players;
     players.reserve(entries.size());
     for (const EspEntry& entry : entries) {
@@ -61,6 +66,17 @@ std::vector<LivePlayer> CapturePlayers(const Settings& settings) {
         if (!player.Bone(1, pelvis)) {
             player.bones.clear();
             player.model = nullptr;
+        }
+        if (lead_seconds > 0.f && off::m_vecVelocity) {
+            Vec3 velocity = g_proc.Read<Vec3>(entry.pawn + off::m_vecVelocity);
+            if (std::isfinite(velocity.x) && std::isfinite(velocity.y) && std::isfinite(velocity.z) &&
+                velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z < 1500.f * 1500.f) {
+                Vec3 shift{velocity.x * lead_seconds, velocity.y * lead_seconds, velocity.z * lead_seconds};
+                Advance(player.origin, shift);
+                for (chams::BoneTransform& bone : player.bones) {
+                    bone.x += shift.x; bone.y += shift.y; bone.z += shift.z;
+                }
+            }
         }
         players.push_back(std::move(player));
     }

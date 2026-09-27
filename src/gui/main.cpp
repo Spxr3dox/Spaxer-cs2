@@ -589,6 +589,7 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(chams), MakeRow("Enabled",          &g_cfg->chams,      &g_cfg->bind_chams), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(chams), MakeRow("Teammates",        &g_cfg->chams_team, nullptr),            FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(chams), MakeComboRow("Material", &g_cfg->chams_material, {"Metallic", "Flat"}), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(chams), MakeSliderRow("Latency comp (ms)", &g_cfg->render_lead_ms, 0, 100, 1), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(chams), MakeComboRow("Hide game model", &g_cfg->chams_hide_model, {"Off", "Transparent", "No draw"}), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(chams), MakeRow("Model tint (game)", &g_cfg->chams_tint, nullptr),           FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(chams), MakeColorRow("Visible color",  &g_cfg->chams_visible_rgba), FALSE, FALSE, 0);

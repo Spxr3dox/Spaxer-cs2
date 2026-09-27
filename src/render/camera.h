@@ -20,6 +20,6 @@ struct Camera {
     bool ProjectMatrix(const Vec3& p, float& sx, float& sy) const;
 };
 
-Camera ReadCamera(int width, int height);
+Camera ReadCamera(int width, int height, float lead_seconds);
 
 }

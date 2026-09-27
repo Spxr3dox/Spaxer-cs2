@@ -126,6 +126,8 @@ struct Settings {
     uint32_t bind_chams;
     uint32_t chams_material;
     uint32_t chams_hide_model;
+    int32_t  render_lead_ms;
+    uint32_t migration_level;
 };
 
 namespace settings {

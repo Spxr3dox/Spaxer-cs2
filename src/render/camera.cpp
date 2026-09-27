@@ -59,7 +59,7 @@ static bool MatrixAgrees(const Camera& camera) {
     return true;
 }
 
-Camera ReadCamera(int width, int height) {
+Camera ReadCamera(int width, int height, float lead_seconds) {
     Camera camera;
     camera.width = width;
     camera.height = height;
@@ -67,6 +67,14 @@ Camera ReadCamera(int width, int height) {
     if (!pawn || !off::m_angEyeAngles || width <= 0 || height <= 0) return camera;
 
     camera.eye = game::EyePosition(pawn);
+    if (lead_seconds > 0.f && off::m_vecVelocity) {
+        Vec3 velocity = g_proc.Read<Vec3>(pawn + off::m_vecVelocity);
+        if (std::isfinite(velocity.x) && std::isfinite(velocity.y) && std::isfinite(velocity.z)) {
+            camera.eye.x += velocity.x * lead_seconds;
+            camera.eye.y += velocity.y * lead_seconds;
+            camera.eye.z += velocity.z * lead_seconds;
+        }
+    }
     camera.angles = g_proc.Read<Vec3>(pawn + off::m_angEyeAngles);
     if (!std::isfinite(camera.eye.x) || !std::isfinite(camera.angles.x) || !std::isfinite(camera.angles.y)) return camera;
 

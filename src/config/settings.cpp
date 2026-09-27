@@ -25,6 +25,13 @@ const char* Path() {
     return s_path;
 }
 
+static constexpr uint32_t kMigrationLevel = 1;
+
+static void Migrate(Settings& s) {
+    if (s.migration_level < 1) s.render_lead_ms = 30;
+    s.migration_level = kMigrationLevel;
+}
+
 static void DefaultChams(Settings& s) {
     s.chams_visible_rgba = 0xFF2D55B4;
     s.chams_hidden_rgba = 0xFFD60A8C;
@@ -127,6 +134,8 @@ void Defaults(Settings& s) {
     s.aimbot_lock = 0;
     s.aimbot_switch_delay_ms = 150;
     DefaultChams(s);
+    s.render_lead_ms = 30;
+    s.migration_level = kMigrationLevel;
 }
 
 Settings* Attach() {
@@ -148,6 +157,7 @@ Settings* Attach() {
         *s = def;
     }
     if (!s->chams_visible_rgba && !s->chams_hidden_rgba && !s->chams_team_rgba) DefaultChams(*s);
+    if (s->migration_level < kMigrationLevel) Migrate(*s);
     return s;
 }
 

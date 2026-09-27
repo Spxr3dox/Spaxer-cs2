@@ -20,6 +20,7 @@
 #include <linux/input.h>
 #include <cairo.h>
 #include <atomic>
+#include <algorithm>
 #include <thread>
 #include <chrono>
 #include <cstdio>
@@ -711,7 +712,7 @@ static gboolean OnDraw(GtkWidget* w, cairo_t* cr, gpointer) {
         return FALSE;
     }
 
-    s_camera = g_hud.in_game.load() ? render::ReadCamera(a.width, a.height) : render::Camera{};
+    s_camera = g_hud.in_game.load() ? render::ReadCamera(a.width, a.height, std::clamp(g_cfg->render_lead_ms, 0, 200) / 1000.f) : render::Camera{};
     std::vector<world::LivePlayer> players;
     if (s_camera.valid) players = world::CapturePlayers(*g_cfg);
     world::DrawChams(cr, s_camera, players, *g_cfg);
