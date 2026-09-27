@@ -78,6 +78,12 @@ static const OffsetEntry kOffsetTable[] = {
     {"m_vecVelocity", &m_vecVelocity},
     {"m_bDidSmokeEffect", &m_bDidSmokeEffect},
     {"m_vSmokeColor", &m_vSmokeColor},
+    {"m_flThrowStrength", &m_flThrowStrength},
+    {"m_bPinPulled", &m_bPinPulled},
+    {"m_nSmokeEffectTickBegin", &m_nSmokeEffectTickBegin},
+    {"m_flMinExposure", &m_flMinExposure},
+    {"m_flMaxExposure", &m_flMaxExposure},
+    {"m_bExposureControl", &m_bExposureControl},
     {"m_Glow", &m_Glow},
     {"m_clrRender", &m_clrRender},
     {"m_nRenderMode", &m_nRenderMode},
@@ -245,6 +251,12 @@ void ResetProcessState() {
     m_vecVelocity = 0;
     m_bDidSmokeEffect = 0;
     m_vSmokeColor = 0;
+    m_flThrowStrength = 0;
+    m_bPinPulled = 0;
+    m_nSmokeEffectTickBegin = 0;
+    m_flMinExposure = 0;
+    m_flMaxExposure = 0;
+    m_bExposureControl = 0;
     m_Glow = 0;
     m_clrRender = 0;
     m_nRenderMode = 0;

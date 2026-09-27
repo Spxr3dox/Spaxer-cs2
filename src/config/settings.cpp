@@ -26,7 +26,7 @@ const char* Path() {
     return s_path;
 }
 
-static constexpr uint32_t kMigrationLevel = 3;
+static constexpr uint32_t kMigrationLevel = 8;
 
 static void DefaultEspExtras(Settings& s) {
     s.sound_esp_rgba = 0x00CCFFC0;
@@ -45,10 +45,22 @@ static void DefaultHumanizer(Settings& s) {
     s.aimbot_release_x100 = 35;
 }
 
+static void DefaultWorld(Settings& s) {
+    s.night_sky = 1;
+    s.ambient_tint = 1;
+    s.ambient_tint_rgba = 0x0A184030;
+    s.world_brightness = 100;
+}
+
 static void Migrate(Settings& s) {
     if (s.migration_level < 1) s.render_lead_ms = 30;
     if (s.migration_level < 2) DefaultEspExtras(s);
     if (s.migration_level < 3) DefaultHumanizer(s);
+    if (s.migration_level < 4) s.autowall_min_damage = 20;
+    if (s.migration_level < 5) s.night_mode_strength = 60;
+    if (s.migration_level < 6) s.weather_density = 60;
+    if (s.migration_level < 7) DefaultWorld(s);
+    if (s.migration_level < 8) s.smoke_color_strength = 100;
     s.migration_level = kMigrationLevel;
 }
 
@@ -157,6 +169,15 @@ void Defaults(Settings& s) {
     s.render_lead_ms = 30;
     DefaultEspExtras(s);
     DefaultHumanizer(s);
+    s.autowall = 0;
+    s.autowall_min_damage = 20;
+    s.night_mode = 0;
+    s.night_mode_strength = 60;
+    s.bind_night_mode = 0;
+    s.weather_mode = 0;
+    s.weather_density = 60;
+    DefaultWorld(s);
+    s.smoke_color_strength = 100;
     s.migration_level = kMigrationLevel;
 }
 

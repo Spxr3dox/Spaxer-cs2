@@ -97,7 +97,18 @@ cd - && python3 tools/chams_models.py
 
 Re-run `python3 tools/chams_models.py` if Valve ever changes the agent models. If a model is missing, chams fall back to a simple bone-based silhouette.
 
-### 3. Run it
+### 3. Map collision
+
+Visibility checks, autowall, grenade prediction, weather and the night sky ray-trace against the real map geometry. Convert it once with the same Source2Viewer CLI (around 1.3 GB for all maps, written to `~/.config/spaxer/maps/`):
+
+```sh
+python3 tools/map_collision.py            # every installed map
+python3 tools/map_collision.py de_mirage  # or just one
+```
+
+If you join a map that hasn't been converted yet, the overlay starts the converter for it in the background.
+
+### 4. Run it
 
 ```sh
 ./spaxer &

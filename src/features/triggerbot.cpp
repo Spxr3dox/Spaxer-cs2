@@ -1,5 +1,6 @@
 #include "features.h"
 #include "sdk/game.h"
+#include "sdk/visibility.h"
 #include "config/settings.h"
 #include "input/input.h"
 #include "state.h"
@@ -76,56 +77,119 @@ struct AimState {
     }
 };
 
-struct HitCapsule { int from, to; float radius; };
+struct HitCapsule { int from, to; float radius; float damage_scale; };
 
 static constexpr HitCapsule kHitCapsules[] = {
-    {6, 7, 4.2f}, {5, 6, 3.6f}, {1, 2, 6.5f}, {2, 4, 6.8f}, {4, 5, 6.2f},
-    {9, 10, 3.0f}, {10, 11, 2.6f}, {13, 14, 3.0f}, {14, 15, 2.6f},
-    {17, 18, 4.0f}, {18, 19, 3.2f}, {20, 21, 4.0f}, {21, 22, 3.2f},
+    {6, 7, 4.2f, 4.f}, {5, 6, 3.6f, 1.f}, {1, 2, 6.5f, 1.25f}, {2, 4, 6.8f, 1.f}, {4, 5, 6.2f, 1.f},
+    {9, 10, 3.0f, 1.f}, {10, 11, 2.6f, 1.f}, {13, 14, 3.0f, 1.f}, {14, 15, 2.6f, 1.f},
+    {17, 18, 4.0f, 0.75f}, {18, 19, 3.2f, 0.75f}, {20, 21, 4.0f, 0.75f}, {21, 22, 3.2f, 0.75f},
 };
 
-static float RaySegmentDistance(const Vec3& origin, const Vec3& dir, const Vec3& a, const Vec3& b) {
-    float best = 1e9f;
-    for (int step = 0; step <= 8; step++) {
-        float t = step / 8.f;
-        Vec3 p{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t};
-        Vec3 d{p.x - origin.x, p.y - origin.y, p.z - origin.z};
-        float along = d.x * dir.x + d.y * dir.y + d.z * dir.z;
-        if (along <= 0.f) continue;
-        Vec3 c{d.x - dir.x * along, d.y - dir.y * along, d.z - dir.z * along};
-        best = std::min(best, sqrtf(c.x * c.x + c.y * c.y + c.z * c.z));
+struct CrosshairHit {
+    bool hit = false;
+    Vec3 point{};
+    float damage_scale = 1.f;
+};
+
+struct ViewTangent {
+    float row[3][4];
+    float right_len, up_len, depth_len;
+
+    bool Load() {
+        if (!off::dwViewMatrix || !off::g_ClientBase) return false;
+        float m[16];
+        if (!g_proc.ReadBytes(off::g_ClientBase + off::dwViewMatrix, m, sizeof(m))) return false;
+        for (float value : m)
+            if (!std::isfinite(value)) return false;
+        for (int c = 0; c < 4; c++) {
+            row[0][c] = m[c];
+            row[1][c] = m[4 + c];
+            row[2][c] = m[12 + c];
+        }
+        right_len = Length(row[0]);
+        up_len = Length(row[1]);
+        depth_len = Length(row[2]);
+        return right_len > 1e-3f && up_len > 1e-3f && depth_len > 1e-3f;
     }
-    return best;
+
+    bool Project(const Vec3& p, float& x, float& y, float& depth) const {
+        depth = (Dot(row[2], p) + row[2][3]) / depth_len;
+        if (depth < 1.f) return false;
+        x = (Dot(row[0], p) + row[0][3]) / right_len / depth;
+        y = (Dot(row[1], p) + row[1][3]) / up_len / depth;
+        return true;
+    }
+
+    void AimPoint(const Vec3& punch, float& x, float& y) const {
+        constexpr float rad = 3.14159265f / 180.f;
+        Vec3 forward{row[2][0] / depth_len, row[2][1] / depth_len, row[2][2] / depth_len};
+        float pitch = -asinf(std::clamp(forward.z, -1.f, 1.f)) + punch.x * 2.f * rad;
+        float yaw = atan2f(forward.y, forward.x) + punch.y * 2.f * rad;
+        Vec3 dir{cosf(pitch) * cosf(yaw), cosf(pitch) * sinf(yaw), -sinf(pitch)};
+        float along = Dot(row[2], dir) / depth_len;
+        x = Dot(row[0], dir) / right_len / along;
+        y = Dot(row[1], dir) / up_len / along;
+    }
+
+private:
+    static float Dot(const float* r, const Vec3& v) { return r[0] * v.x + r[1] * v.y + r[2] * v.z; }
+    static float Length(const float* r) { return sqrtf(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]); }
+};
+
+static float ClosestOnSegment(float px, float py, float ax, float ay, float bx, float by, float& distance) {
+    float dx = bx - ax, dy = by - ay;
+    float length_sq = dx * dx + dy * dy;
+    float t = length_sq > 0.f ? std::clamp(((px - ax) * dx + (py - ay) * dy) / length_sq, 0.f, 1.f) : 0.f;
+    float cx = ax + dx * t - px, cy = ay + dy * t - py;
+    distance = sqrtf(cx * cx + cy * cy);
+    return t;
 }
 
-static bool CrosshairOnHitbox(uintptr_t local_pawn, uintptr_t target, float tolerance) {
-    if (!off::m_modelState || !off::m_angEyeAngles) return true;
+static CrosshairHit HitboxUnderCrosshair(uintptr_t local_pawn, uintptr_t target, float tolerance) {
+    CrosshairHit result;
+    ViewTangent view;
+    if (!off::m_modelState || !view.Load()) return result;
     uintptr_t node = g_proc.Read<uintptr_t>(target + off::m_pGameSceneNode);
     uintptr_t bones_array = node ? g_proc.Read<uintptr_t>(node + off::m_modelState + 0x80) : 0;
-    if (!bones_array) return true;
+    if (!bones_array) return result;
     Vec3 bones[23];
     Vec3 origin = game::Origin(target);
     for (int i = 0; i < 23; i++) bones[i] = g_proc.Read<Vec3>(bones_array + static_cast<uintptr_t>(i) * 32);
-    if (!game::BoneNearOrigin(bones[7], origin)) return true;
+    if (!game::BoneNearOrigin(bones[7], origin)) return result;
 
-    Vec3 angles = g_proc.Read<Vec3>(local_pawn + off::m_angEyeAngles);
-    if (off::m_aimPunchAngle) {
-        Vec3 punch = g_proc.Read<Vec3>(local_pawn + off::m_aimPunchAngle);
-        angles.x += punch.x * 2.f;
-        angles.y += punch.y * 2.f;
-    }
-    constexpr float rad = 3.14159265f / 180.f;
-    float cp = cosf(angles.x * rad), sp = sinf(angles.x * rad);
-    float cy = cosf(angles.y * rad), sy = sinf(angles.y * rad);
-    Vec3 dir{cp * cy, cp * sy, -sp};
-    Vec3 eye = game::EyePosition(local_pawn);
+    Vec3 punch = off::m_aimPunchAngle ? g_proc.Read<Vec3>(local_pawn + off::m_aimPunchAngle) : Vec3{};
+    float aim_x, aim_y;
+    view.AimPoint(punch, aim_x, aim_y);
+    float best_margin = 0.f;
     for (const HitCapsule& capsule : kHitCapsules) {
         const Vec3& a = bones[capsule.from];
         const Vec3& b = bones[capsule.to];
         if (!game::BoneNearOrigin(a, origin) || !game::BoneNearOrigin(b, origin)) continue;
-        if (RaySegmentDistance(eye, dir, a, b) < capsule.radius * tolerance) return true;
+        float ax, ay, a_depth, bx, by, b_depth;
+        if (!view.Project(a, ax, ay, a_depth) || !view.Project(b, bx, by, b_depth)) continue;
+        float radius = capsule.radius * tolerance / std::max(a_depth, b_depth);
+        float distance;
+        float t = ClosestOnSegment(aim_x, aim_y, ax, ay, bx, by, distance);
+        float margin = radius - distance;
+        if (margin <= 0.f || (result.hit && capsule.damage_scale <= result.damage_scale && margin <= best_margin)) continue;
+        result.hit = true;
+        result.point = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t};
+        result.damage_scale = capsule.damage_scale;
+        best_margin = margin;
     }
-    return false;
+    return result;
+}
+
+static bool CrosshairOnHitbox(uintptr_t local_pawn, uintptr_t target, float tolerance) {
+    if (!off::dwViewMatrix) return true;
+    return HitboxUnderCrosshair(local_pawn, target, tolerance).hit;
+}
+
+static bool PenetratesTo(uintptr_t local_pawn, uintptr_t target, const vis::Ballistics& weapon, float min_damage, float tolerance) {
+    CrosshairHit hit = HitboxUnderCrosshair(local_pawn, target, tolerance);
+    if (!hit.hit) return false;
+    Vec3 eye = game::EyePosition(local_pawn);
+    return vis::DamageAt(eye, hit.point, weapon) * hit.damage_scale >= min_damage;
 }
 
 static bool IsSniper(int def_idx) {
@@ -196,6 +260,29 @@ static void Loop() {
             }
         }
 
+        vis::Ballistics ballistics{};
+        bool autowall = settings::Enabled(cfg->autowall) && vis::Ready() && off::dwViewMatrix &&
+                        vis::WeaponBallistics(game::ActiveWeaponDefinitionIndex(pawn), ballistics);
+        float min_damage = static_cast<float>(std::max(1, cfg->autowall_min_damage));
+        bool wall_target = false;
+        if (!target && autowall) {
+            for (int i = 1; i <= 64 && !target; i++) {
+                uintptr_t ctrl = game::EntityFromList(list, i);
+                if (!ctrl) continue;
+                uint32_t handle = g_proc.Read<uint32_t>(ctrl + off::m_hPlayerPawn);
+                if (!handle || handle == 0xFFFFFFFF) continue;
+                uintptr_t enemy = game::EntityFromList(list, handle & 0x7FFF);
+                if (!enemy || enemy == pawn || game::IsDormant(enemy)) continue;
+                int hp = g_proc.Read<int>(enemy + off::m_iHealth);
+                int tm = game::Team(enemy);
+                if (hp <= 0 || hp > 100 || (tm != 2 && tm != 3) || tm == myTeam) continue;
+                if (PenetratesTo(pawn, enemy, ballistics, min_damage, 1.f)) {
+                    target = enemy;
+                    wall_target = true;
+                }
+            }
+        }
+
         if (!target) { aim.aimFrames = 0; g_input.HoldCrouch(false); continue; }
 
         int def_idx = 0;
@@ -209,7 +296,7 @@ static void Loop() {
         bool is_scoped = off::m_bIsScoped && g_proc.Read<bool>(pawn + off::m_bIsScoped);
         bool is_sniper = is_scoped || IsSniper(def_idx);
 
-        if (settings::Enabled(cfg->trigger_aim_correction) && aim.aimFrames < 10) {
+        if (!wall_target && settings::Enabled(cfg->trigger_aim_correction) && aim.aimFrames < 10) {
             aim.aimFrames++;
             if (!aim.AimAtHead(pawn, target, 0.5f)) continue;
         }
@@ -255,10 +342,14 @@ static void Loop() {
         int delay = weapon ? weapon->trigger_delay_ms : cfg->trigger_delay_ms;
         if (delay > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delay));
 
-        bool still_on_target = true;
-        if (off::m_iIDEntIndex) still_on_target = g_proc.Read<int>(pawn + off::m_iIDEntIndex) == entIdx;
-        if (still_on_target) still_on_target = g_proc.Read<int>(target + off::m_iHealth) > 0;
-        if (still_on_target) still_on_target = CrosshairOnHitbox(pawn, target, is_sniper ? 0.85f : 1.0f);
+        bool still_on_target = g_proc.Read<int>(target + off::m_iHealth) > 0;
+        float tolerance = is_sniper ? 0.85f : 1.0f;
+        if (still_on_target && wall_target) {
+            still_on_target = PenetratesTo(pawn, target, ballistics, min_damage, tolerance);
+        } else if (still_on_target) {
+            if (off::m_iIDEntIndex) still_on_target = g_proc.Read<int>(pawn + off::m_iIDEntIndex) == entIdx;
+            if (still_on_target) still_on_target = CrosshairOnHitbox(pawn, target, tolerance);
+        }
         if (!still_on_target) {
             if (do_shift) g_input.HoldShift(false);
             aim.aimFrames = 0;

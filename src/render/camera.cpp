@@ -102,6 +102,25 @@ Camera ReadCamera(int width, int height, float lead_seconds) {
         for (float value : camera.matrix) finite = finite && std::isfinite(value);
         camera.use_matrix = finite && MatrixAgrees(camera);
     }
+    static float s_matrix_tan_h = 0.f, s_matrix_tan_v = 0.f;
+    static int s_matrix_misses = 0;
+    if (camera.use_matrix) {
+        s_matrix_misses = 0;
+        const float* m = camera.matrix;
+        float right_len = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+        float up_len = std::sqrt(m[4] * m[4] + m[5] * m[5] + m[6] * m[6]);
+        if (right_len > 1e-3f && up_len > 1e-3f && fov >= 80.f) {
+            s_matrix_tan_h = 1.f / right_len;
+            s_matrix_tan_v = 1.f / up_len;
+        }
+    } else if (off::dwViewMatrix && ++s_matrix_misses > 300) {
+        off::dwViewMatrix = 0;
+        s_matrix_misses = 0;
+    }
+    if (s_matrix_tan_h > 0.f && fov >= 80.f) {
+        camera.tan_half_h = s_matrix_tan_h;
+        camera.tan_half_v = s_matrix_tan_v;
+    }
     return camera;
 }
 

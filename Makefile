@@ -1,5 +1,5 @@
 CXX      := g++
-CXXFLAGS := -std=c++20 -O2 -pipe -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -MMD -MP
+CXXFLAGS := -std=c++20 -O2 -fopenmp -pipe -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -MMD -MP
 
 INCLUDES := -Isrc
 
@@ -13,6 +13,7 @@ SRC := \
   src/memory/process.cpp \
   src/sdk/offsets.cpp \
   src/sdk/dumper.cpp \
+  src/sdk/visibility.cpp \
   src/config/settings.cpp \
   src/input/input.cpp \
   src/features/bomb_update.cpp \
@@ -32,6 +33,9 @@ SRC := \
   src/render/camera.cpp \
   src/render/model_chams.cpp \
   src/overlay/world.cpp \
+  src/overlay/weather.cpp \
+  src/overlay/night_sky.cpp \
+  src/overlay/grenade.cpp \
   src/overlay/main.cpp
 
 GUI_SRC := \

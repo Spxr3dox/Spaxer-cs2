@@ -27,11 +27,6 @@ struct DroppedItemEntry {
     char name[32];
 };
 
-struct GrenadePoint {
-    float x, y, z;
-    bool bounce;
-};
-
 struct HudState {
     std::atomic<bool>  bomb_visible{false};
     std::atomic<float> bomb_blow_secs{0.f};
@@ -57,8 +52,6 @@ struct HudState {
     std::mutex                   items_mtx;
     std::vector<DroppedItemEntry> dropped_items;
 
-    std::mutex                grenade_mtx;
-    std::vector<GrenadePoint> grenade_path;
 };
 
 extern HudState g_hud;

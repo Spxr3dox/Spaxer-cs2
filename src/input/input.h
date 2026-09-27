@@ -12,6 +12,8 @@ public:
     void HoldCrouch(bool down);
     void SnapTap();
     void SetAutoStrafe(int direction);
+    void SetVirtualKey(int key_code, bool down);
+    void ForceVirtualKey(int key_code, bool down);
     void ClickLeft();
     void MouseMove(int dx, int dy);
     void HoldShift(bool down);
@@ -31,7 +33,11 @@ private:
     std::atomic<int> m_snap_priority{0};
     std::atomic<bool> m_snap_virt_a{false};
     std::atomic<bool> m_snap_virt_d{false};
-    std::atomic<int> m_strafe_direction{0};
+    void FakeKey(int key_code, bool down);
+    std::atomic<bool>* VirtualKeyState(int key_code);
+    std::atomic<bool> m_virtual_space{false};
+    std::atomic<bool> m_virtual_a{false};
+    std::atomic<bool> m_virtual_d{false};
 };
 
 extern Input g_input;

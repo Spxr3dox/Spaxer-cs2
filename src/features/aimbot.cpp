@@ -1,5 +1,6 @@
 #include "features.h"
 #include "sdk/game.h"
+#include "sdk/visibility.h"
 #include "config/settings.h"
 #include "input/input.h"
 #include "state.h"
@@ -32,15 +33,28 @@ static inline Vec3 CalcAngle(const Vec3& src, const Vec3& dst) {
     return a;
 }
 
-struct AimPoint { Vec3 world; };
+struct AimPoint { Vec3 world; float damage_scale; };
 
 static void CollectPoints(Settings* cfg, uintptr_t pawn, std::vector<AimPoint>& out) {
-    if (settings::Enabled(cfg->aimbot_point_head))   out.push_back({game::BonePosition(pawn, game::bones::head, 64.f)});
-    if (settings::Enabled(cfg->aimbot_point_neck))   out.push_back({game::BonePosition(pawn, game::bones::neck, 58.f)});
-    if (settings::Enabled(cfg->aimbot_point_chest))  out.push_back({game::BonePosition(pawn, game::bones::chest, 50.f)});
-    if (settings::Enabled(cfg->aimbot_point_pelvis)) out.push_back({game::BonePosition(pawn, game::bones::pelvis, 36.f)});
-    if (out.empty()) out.push_back({game::BonePosition(pawn, game::bones::head, 64.f)});
+    if (settings::Enabled(cfg->aimbot_point_head))   out.push_back({game::BonePosition(pawn, game::bones::head, 64.f), 4.f});
+    if (settings::Enabled(cfg->aimbot_point_neck))   out.push_back({game::BonePosition(pawn, game::bones::neck, 58.f), 1.f});
+    if (settings::Enabled(cfg->aimbot_point_chest))  out.push_back({game::BonePosition(pawn, game::bones::chest, 50.f), 1.f});
+    if (settings::Enabled(cfg->aimbot_point_pelvis)) out.push_back({game::BonePosition(pawn, game::bones::pelvis, 36.f), 1.25f});
+    if (out.empty()) out.push_back({game::BonePosition(pawn, game::bones::head, 64.f), 4.f});
 }
+
+struct Reachability {
+    bool rays = false;
+    bool autowall = false;
+    vis::Ballistics weapon{};
+    float min_damage = 0.f;
+    Vec3 eye{};
+
+    bool Hits(const AimPoint& point) const {
+        if (vis::LineOfSight(eye, point.world)) return true;
+        return autowall && vis::DamageAt(eye, point.world, weapon) * point.damage_scale >= min_damage;
+    }
+};
 
 static bool EnemyAlive(uintptr_t pawn, int my_team) {
     if (!pawn || game::IsDormant(pawn)) return false;
@@ -190,6 +204,12 @@ static AimResult ComputeAim(Settings* cfg, AimState& state, Humanizer& humanizer
             va.x += punch.x * 2.f;
             va.y += punch.y * 2.f;
         }
+        Reachability reach;
+        reach.rays = need_visible && vis::Ready();
+        reach.eye = eye;
+        reach.autowall = settings::Enabled(cfg->autowall) &&
+                         vis::WeaponBallistics(game::ActiveWeaponDefinitionIndex(pawn), reach.weapon);
+        reach.min_damage = static_cast<float>(std::max(1, cfg->autowall_min_damage));
         float deg_per_pixel = cfg->aimbot_sens_x1000 / 1000.f;
         if (deg_per_pixel < 0.005f) deg_per_pixel = 0.005f;
 
@@ -211,9 +231,11 @@ static AimResult ComputeAim(Settings* cfg, AimState& state, Humanizer& humanizer
                 if (!handle || handle == 0xFFFFFFFF) continue;
                 uintptr_t enemy = game::EntityFromList(list, handle & 0x7FFF);
                 if (enemy == pawn || !EnemyAlive(enemy, my_team)) continue;
-                if (need_visible && !SpottedByLocal(enemy)) continue;
+                if (need_visible && !reach.rays && !SpottedByLocal(enemy)) continue;
                 std::vector<AimPoint> pts;
                 CollectPoints(cfg, enemy, pts);
+                if (reach.rays) std::erase_if(pts, [&](const AimPoint& p) { return !reach.Hits(p); });
+                if (pts.empty()) continue;
                 float enemy_delta = 1e9f;
                 for (const auto& p : pts) {
                     Vec3 desired;
@@ -244,6 +266,11 @@ static AimResult ComputeAim(Settings* cfg, AimState& state, Humanizer& humanizer
         } else {
             std::vector<AimPoint> pts;
             CollectPoints(cfg, target, pts);
+            if (reach.rays) {
+                std::vector<AimPoint> reachable = pts;
+                std::erase_if(reachable, [&](const AimPoint& p) { return !reach.Hits(p); });
+                if (!reachable.empty()) pts = std::move(reachable);
+            }
             aim_point = pts.front().world;
             float nearest = 1e9f;
             for (const auto& p : pts) {

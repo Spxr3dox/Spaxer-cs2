@@ -111,4 +111,16 @@
     X(aimbot_speed_max_x100, Number) \
     X(aimbot_shake_x100, Number) \
     X(aimbot_release_x100, Number) \
-    X(auto_strafe_mode, Number)
+    X(auto_strafe_mode, Number) \
+    X(autowall, Toggle) \
+    X(autowall_min_damage, Number) \
+    X(night_mode, Toggle) \
+    X(night_mode_strength, Number) \
+    X(bind_night_mode, Bind) \
+    X(weather_mode, Number) \
+    X(weather_density, Number) \
+    X(night_sky, Toggle) \
+    X(ambient_tint, Toggle) \
+    X(ambient_tint_rgba, Color) \
+    X(world_brightness, Number) \
+    X(smoke_color_strength, Number)

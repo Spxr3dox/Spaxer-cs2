@@ -71,23 +71,6 @@ static std::vector<MapRegion> GetRWRegionsWithBSS(const char* libname) {
     return regions;
 }
 
-static std::vector<MapRegion> GetReadOnlyRegions(const char* libname) {
-    std::vector<MapRegion> regions;
-    char path[64];
-    snprintf(path, sizeof(path), "/proc/%d/maps", g_proc.pid());
-    FILE* f = fopen(path, "r");
-    if (!f) return regions;
-    char line[1024];
-    while (fgets(line, sizeof(line), f)) {
-        uintptr_t start, end;
-        char perms[8]{};
-        if (sscanf(line, "%lx-%lx %7s", &start, &end, perms) != 3) continue;
-        if (perms[0] == 'r' && perms[1] != 'w' && strstr(line, libname)) regions.push_back({start, end});
-    }
-    fclose(f);
-    return regions;
-}
-
 static bool TryVerifyEntityList(uintptr_t val) {
     uintptr_t chunk0 = g_proc.Read<uintptr_t>(val + 0x10);
     if (chunk0 < 0x10000 || chunk0 > 0x7FFFFFFFFFFF) return false;
@@ -97,7 +80,7 @@ static bool TryVerifyEntityList(uintptr_t val) {
         uintptr_t ent = g_proc.Read<uintptr_t>(chunk0 + 0x70 * ei);
         if (ent > 0x10000 && ent < 0x7FFFFFFFFFFF) validPtrs++;
     }
-    if (validPtrs < 2) return false;
+    if (validPtrs < 1) return false;
 
     for (int ei = 1; ei <= 64; ei++) {
         uintptr_t ctrl = g_proc.Read<uintptr_t>(chunk0 + 0x70 * ei);
@@ -255,163 +238,54 @@ static bool GetCameraSample(int local_idx, CameraSample& sample) {
     return true;
 }
 
-[[maybe_unused]] static bool MatrixMatchesCamera(const float* m, const CameraSample& sample) {
+static float Dot3(const float* a, const WorldPt& b) { return a[0] * b.x + a[1] * b.y + a[2] * b.z; }
+static float Dot3(const float* a, const float* b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+static bool IsViewProjection(const float* m, const CameraSample& camera) {
     for (int i = 0; i < 16; i++)
-        if (!std::isfinite(m[i]) || fabsf(m[i]) > 1e5f) return false;
-    if (fabsf(m[12] - sample.forward.x) > 0.60f ||
-        fabsf(m[13] - sample.forward.y) > 0.60f ||
-        fabsf(m[14] - sample.forward.z) > 0.60f) return false;
-    float expected_w = -(m[12] * sample.eye.x + m[13] * sample.eye.y + m[14] * sample.eye.z);
-    if (fabsf(m[15] - expected_w) > 128.f) return false;
-    if (fabsf(m[0]) + fabsf(m[1]) + fabsf(m[2]) < 1e-4f) return false;
-    if (fabsf(m[4]) + fabsf(m[5]) + fabsf(m[6]) < 1e-4f) return false;
-    return true;
-}
-
-static std::vector<WorldPt> CollectVisibleOrigins(int local_idx) {
-    std::vector<WorldPt> pts;
-    if (!off::g_EntityListPtr || !off::m_pGameSceneNode) return pts;
-    int ctrls = 0, valid_pawns = 0, alive = 0, with_origin = 0;
-    for (int i = 1; i <= 64 && pts.size() < 8; i++) {
-        uintptr_t ctrl = GetEntityFromList(off::g_EntityListPtr, i);
-        if (!ctrl) continue;
-        ctrls++;
-        if (i == local_idx) continue;
-        uint32_t ph = g_proc.Read<uint32_t>(ctrl + off::m_hPlayerPawn);
-        if (!ph || ph == 0xFFFFFFFF) continue;
-        uintptr_t pawn = GetEntityFromList(off::g_EntityListPtr, ph & 0x7FFF);
-        if (!pawn) continue;
-        valid_pawns++;
-        int hp = g_proc.Read<int>(pawn + off::m_iHealth);
-        if (hp <= 0 || hp > 100) continue;
-        alive++;
-        uintptr_t sn = g_proc.Read<uintptr_t>(pawn + off::m_pGameSceneNode);
-        if (!sn) continue;
-        WorldPt origin = g_proc.Read<WorldPt>(sn + off::m_vecAbsOrigin);
-        if (!LooksLikeWorldPos(origin.x, origin.y, origin.z)) continue;
-        with_origin++;
-        pts.push_back(origin);
-    }
-
-    if (pts.size() < 3 && local_idx > 0) {
-        uintptr_t ctrl = GetEntityFromList(off::g_EntityListPtr, local_idx);
-        if (ctrl) {
-            uint32_t ph = g_proc.Read<uint32_t>(ctrl + off::m_hPlayerPawn);
-            if (ph && ph != 0xFFFFFFFF) {
-                uintptr_t pawn = GetEntityFromList(off::g_EntityListPtr, ph & 0x7FFF);
-                if (pawn) {
-                    uintptr_t sn = g_proc.Read<uintptr_t>(pawn + off::m_pGameSceneNode);
-                    if (sn) {
-                        WorldPt o = g_proc.Read<WorldPt>(sn + off::m_vecAbsOrigin);
-                        if (LooksLikeWorldPos(o.x, o.y, o.z)) {
-                            const float dxs[4] = {200.f, -200.f, 0.f, 0.f};
-                            const float dys[4] = {0.f, 0.f, 200.f, -200.f};
-                            for (int k = 0; k < 4 && pts.size() < 8; k++)
-                                pts.push_back({o.x + dxs[k], o.y + dys[k], o.z});
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    static int loglimit = 0;
-    if (loglimit++ < 3)
-        Log("[dumper] collect: ctrls=%d pawns=%d alive=%d origin=%d total_pts=%zu\n",
-            ctrls, valid_pawns, alive, with_origin, pts.size());
-    return pts;
+        if (!std::isfinite(m[i]) || fabsf(m[i]) > 1e6f) return false;
+    const float* right = m;
+    const float* up = m + 4;
+    const float* depth = m + 12;
+    float right_len = sqrtf(Dot3(right, right));
+    float up_len = sqrtf(Dot3(up, up));
+    float depth_len = sqrtf(Dot3(depth, depth));
+    if (depth_len < 0.9f || depth_len > 1.1f || right_len < 0.2f || up_len < 0.2f) return false;
+    if (Dot3(depth, camera.forward) / depth_len < 0.995f) return false;
+    if (fabsf(Dot3(right, depth)) > 0.02f * right_len * depth_len) return false;
+    if (fabsf(Dot3(up, depth)) > 0.02f * up_len * depth_len) return false;
+    if (fabsf(right[2]) > 0.05f * right_len) return false;
+    if (fabsf(m[15] + Dot3(depth, camera.eye)) > 64.f) return false;
+    WorldPt ahead{camera.eye.x + camera.forward.x * 1000.f, camera.eye.y + camera.forward.y * 1000.f,
+                  camera.eye.z + camera.forward.z * 1000.f};
+    float w = Dot3(depth, ahead) + m[15];
+    if (w < 500.f) return false;
+    float x = (Dot3(right, ahead) + m[3]) / w;
+    float y = (Dot3(up, ahead) + m[7]) / w;
+    return fabsf(x) < 0.08f && fabsf(y) < 0.12f;
 }
 
 static bool ScanForViewMatrix(int local_idx) {
     if (!off::g_ClientBase) return false;
     CameraSample camera{};
-    if (!GetCameraSample(local_idx, camera)) {
-        Log("[dumper] camera sample unavailable\n");
-        return false;
-    }
-    Log("[dumper] camera eye %.1f %.1f %.1f forward %.3f %.3f %.3f\n",
-        camera.eye.x, camera.eye.y, camera.eye.z,
-        camera.forward.x, camera.forward.y, camera.forward.z);
-    auto pts = CollectVisibleOrigins(local_idx);
-    if (pts.size() < 3) { Log("[dumper] view matrix scan: need 3+ bot origins, have %zu\n", pts.size()); return false; }
-    Log("[dumper] view matrix scan with %zu bot origins\n", pts.size());
-    for (auto& p : pts) Log("  pt %.1f %.1f %.1f\n", p.x, p.y, p.z);
-
-    char path[64];
-    snprintf(path, sizeof(path), "/proc/%d/maps", g_proc.pid());
-    FILE* f = fopen(path, "r");
-    if (!f) return false;
-    std::vector<std::pair<uintptr_t, uintptr_t>> regions;
-    char line[1024];
-    while (fgets(line, sizeof(line), f)) {
-        uintptr_t s, e;
-        if (sscanf(line, "%lx-%lx", &s, &e) != 2) continue;
-        bool hasLib = strstr(line, "libclient.so") != nullptr;
-        bool isRw   = strstr(line, "rw-") != nullptr;
-        if (hasLib && isRw) regions.push_back({s, e});
-    }
-    fclose(f);
-
-    char mempath[64];
-    snprintf(mempath, sizeof(mempath), "/proc/%d/mem", g_proc.pid());
-    int fd = open(mempath, O_RDONLY);
-    if (fd < 0) return false;
-
-    for (auto& r : regions) {
-        constexpr size_t CHUNK = 65536;
-        uint8_t buf[CHUNK];
-        for (uintptr_t addr = r.first; addr < r.second; addr += CHUNK) {
-            size_t toRead = r.second - addr;
-            if (toRead > CHUNK) toRead = CHUNK;
-            ssize_t n = pread(fd, buf, toRead, (off_t)addr);
-            if (n < 64) continue;
-            for (size_t i = 0; i + 64 <= (size_t)n; i += 4) {
+    if (!GetCameraSample(local_idx, camera)) return false;
+    constexpr size_t kChunk = 1 << 20;
+    std::vector<uint8_t> buf(kChunk + 64);
+    for (const auto& r : GetRWRegionsWithBSS("libclient.so")) {
+        for (uintptr_t at = r.start; at < r.end; at += kChunk) {
+            size_t len = std::min<size_t>(kChunk + 64, r.end - at);
+            if (len < 64 || !g_proc.ReadBytes(at, buf.data(), len)) continue;
+            for (size_t i = 0; i + 64 <= len && i < kChunk; i += 4) {
                 float m[16];
-                memcpy(m, buf + i, 64);
-                bool bad = false;
-                for (int k = 0; k < 16; k++)
-                    if (m[k] != m[k] || m[k] > 1e10f || m[k] < -1e10f) { bad = true; break; }
-                if (bad) continue;
-
-                int passing = 0;
-                float first_sx = 999.f, first_sy = 999.f;
-                bool varied = false;
-                bool head_above_feet = true;
-                for (auto& p : pts) {
-                    float w = m[12]*p.x + m[13]*p.y + m[14]*p.z + m[15];
-                    if (w < 30.f || w > 1e5f) { head_above_feet = false; continue; }
-                    float x = m[0]*p.x + m[1]*p.y + m[2]*p.z + m[3];
-                    float y = m[4]*p.x + m[5]*p.y + m[6]*p.z + m[7];
-                    float inv = 1.f / w;
-                    float sx = 0.5f * (1.f + x * inv);
-                    float sy = 0.5f * (1.f - y * inv);
-                    if (sx < -0.05f || sx > 1.05f || sy < -0.05f || sy > 1.05f) { head_above_feet = false; continue; }
-
-                    float hz = p.z + 72.f;
-                    float wh = m[12]*p.x + m[13]*p.y + m[14]*hz + m[15];
-                    float yh = m[4]*p.x + m[5]*p.y + m[6]*hz + m[7];
-                    if (wh <= 0.f) { head_above_feet = false; continue; }
-                    float sy_head = 0.5f * (1.f - yh / wh);
-                    if (sy_head >= sy) head_above_feet = false;
-
-                    if (first_sx == 999.f) { first_sx = sx; first_sy = sy; }
-                    else if (!varied) {
-                        if (fabsf(sx - first_sx) > 0.05f || fabsf(sy - first_sy) > 0.05f)
-                            varied = true;
-                    }
-                    passing++;
-                }
-                if (head_above_feet && varied && passing >= (int)pts.size() - 1 && passing >= 3) {
-                    off::dwViewMatrix = (addr + i) - off::g_ClientBase;
-                    Log("[dumper] dwViewMatrix=0x%lX (abs=0x%lX) matched %d/%zu\n",
-                        off::dwViewMatrix, addr + i, passing, pts.size());
-                    close(fd);
-                    return true;
-                }
+                memcpy(m, buf.data() + i, sizeof(m));
+                if (!IsViewProjection(m, camera)) continue;
+                off::dwViewMatrix = at + i - off::g_ClientBase;
+                Log("[dumper] dwViewMatrix=0x%lX tan_half=%.4f,%.4f\n", off::dwViewMatrix,
+                    1.f / sqrtf(Dot3(m, m)), 1.f / sqrtf(Dot3(m + 4, m + 4)));
+                return true;
             }
         }
     }
-    close(fd);
     Log("[dumper] view matrix scan failed\n");
     return false;
 }
@@ -741,48 +615,6 @@ void Reset() {
 }
 
 bool ReadyForGameplay() { return off::g_OffsetsReady.load() && off::g_EntityListPtr != 0; }
-
-std::vector<uintptr_t> FindButtonNameSlots(const char* name) {
-    std::vector<uintptr_t> out;
-    std::string needle(1, '\0');
-    needle += name;
-    needle += '\0';
-    constexpr size_t kChunk = 1 << 20;
-    std::vector<char> buf(kChunk + needle.size());
-    std::vector<uintptr_t> strings;
-    for (const auto& r : GetReadOnlyRegions("libclient.so")) {
-        for (uintptr_t at = r.start; at < r.end; at += kChunk) {
-            size_t len = std::min<size_t>(kChunk + needle.size(), r.end - at);
-            if (!g_proc.ReadBytes(at, buf.data(), len)) continue;
-            std::string_view view(buf.data(), len);
-            for (size_t pos = view.find(needle); pos != std::string_view::npos; pos = view.find(needle, pos + 1))
-                strings.push_back(at + pos + 1);
-        }
-    }
-    if (strings.empty()) return out;
-    std::vector<uint8_t> data(kChunk);
-    for (const auto& r : GetRWRegionsWithBSS("libclient.so")) {
-        for (uintptr_t at = r.start; at < r.end; at += kChunk) {
-            size_t len = std::min<size_t>(kChunk, r.end - at);
-            if (!g_proc.ReadBytes(at, data.data(), len)) continue;
-            for (size_t off = 0; off + 8 <= len; off += 8) {
-                uintptr_t value;
-                memcpy(&value, data.data() + off, 8);
-                if (std::find(strings.begin(), strings.end(), value) != strings.end()) out.push_back(at + off);
-            }
-        }
-    }
-    return out;
-}
-
-std::vector<uintptr_t> FindButtonStateCandidates(const char* name) {
-    std::vector<uintptr_t> out;
-    for (uintptr_t slot : FindButtonNameSlots(name))
-        for (uintptr_t field = 0; field < 0x80; field += 4) out.push_back(slot + field);
-    std::sort(out.begin(), out.end());
-    out.erase(std::unique(out.begin(), out.end()), out.end());
-    return out;
-}
 
 void Run() {
     LogInit();

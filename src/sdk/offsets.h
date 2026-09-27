@@ -52,6 +52,12 @@ namespace off {
     inline uintptr_t m_vecVelocity     = 0;
     inline uintptr_t m_bDidSmokeEffect = 0;
     inline uintptr_t m_vSmokeColor     = 0;
+    inline uintptr_t m_flThrowStrength = 0;
+    inline uintptr_t m_bPinPulled = 0;
+    inline uintptr_t m_nSmokeEffectTickBegin = 0;
+    inline uintptr_t m_flMinExposure = 0;
+    inline uintptr_t m_flMaxExposure = 0;
+    inline uintptr_t m_bExposureControl = 0;
     inline uintptr_t m_Glow              = 0;
     inline uintptr_t m_clrRender         = 0;
     inline uintptr_t m_nRenderMode       = 0;

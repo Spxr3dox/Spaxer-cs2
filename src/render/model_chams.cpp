@@ -10,6 +10,10 @@
 
 namespace chams {
 
+constexpr float kRenderScale = 0.5f;
+constexpr int kBands = 12;
+constexpr int kThreads = 6;
+
 static constexpr uint32_t kFormatVersion = 2;
 
 static std::string ModelsDir() {
@@ -61,7 +65,9 @@ static inline void Rotate(const BoneTransform& b, const float* v, float& ox, flo
     oz = v[2] + b.qw * tz + (b.qx * ty - b.qy * tx);
 }
 
-void ModelRenderer::Begin(int width, int height) {
+void ModelRenderer::Begin(int screen_width, int screen_height) {
+    int width = std::max(1, static_cast<int>(screen_width * kRenderScale));
+    int height = std::max(1, static_cast<int>(screen_height * kRenderScale));
     if (width != width_ || height != height_) {
         width_ = width;
         height_ = height;
@@ -88,6 +94,7 @@ void ModelRenderer::Skin(const SkinnedModel& model, const BoneTransform* bones) 
     size_t count = model.VertexCount();
     positions_.resize(count * 3);
     normals_.resize(count * 3);
+    #pragma omp parallel for schedule(static) num_threads(kThreads)
     for (size_t v = 0; v < count; v++) {
         float px = 0.f, py = 0.f, pz = 0.f, nx = 0.f, ny = 0.f, nz = 0.f;
         for (int k = 0; k < 4; k++) {
@@ -120,15 +127,18 @@ void ModelRenderer::Shade(const render::Camera& camera, uint32_t rgba, Material 
     float glint_b = base_b + (1.f - base_b) * 0.75f;
     size_t count = positions_.size() / 3;
     screen_.resize(count);
+    #pragma omp parallel for schedule(static) num_threads(kThreads)
     for (size_t v = 0; v < count; v++) {
         Vec3 p{positions_[v * 3], positions_[v * 3 + 1], positions_[v * 3 + 2]};
         ScreenVertex& out = screen_[v];
         float depth = camera.Depth(p);
         out.valid = depth > 1.f && camera.Project(p, out.x, out.y);
         if (!out.valid) continue;
+        out.x *= kRenderScale;
+        out.y *= kRenderScale;
         out.inv_depth = 1.f / depth;
         if (material == Material::Flat) {
-            out.r = base_r; out.g = base_g; out.b = base_b;
+            out.r = base_r * alpha_byte_; out.g = base_g * alpha_byte_; out.b = base_b * alpha_byte_;
             continue;
         }
         float vx = camera.eye.x - p.x, vy = camera.eye.y - p.y, vz = camera.eye.z - p.z;
@@ -143,19 +153,22 @@ void ModelRenderer::Shade(const render::Camera& camera, uint32_t rgba, Material 
         float hx = lx + vx, hy = ly + vy, hz = lz + vz;
         float half_length = std::sqrt(hx * hx + hy * hy + hz * hz);
         float n_dot_h = std::max(0.f, (nx * hx + ny * hy + nz * hz) / half_length);
-        float specular = std::pow(n_dot_h, 28.f);
-        float rim = std::pow(1.f - n_dot_v, 2.5f);
+        float h2 = n_dot_h * n_dot_h, h4 = h2 * h2, h8 = h4 * h4, h16 = h8 * h8;
+        float specular = h16 * h8 * h4;
+        float edge = 1.f - n_dot_v;
+        float rim = edge * edge * std::sqrt(edge);
         float reflect_z = 2.f * n_dot_v * nz - vz;
         float environment = 0.5f + 0.5f * reflect_z;
         float body = 0.08f + 0.5f * diffuse + 0.38f * environment * environment;
         float shine = specular * 1.4f + rim * 0.75f;
-        out.r = std::min(1.f, base_r * body + glint_r * shine);
-        out.g = std::min(1.f, base_g * body + glint_g * shine);
-        out.b = std::min(1.f, base_b * body + glint_b * shine);
+        out.r = std::min(1.f, base_r * body + glint_r * shine) * alpha_byte_;
+        out.g = std::min(1.f, base_g * body + glint_g * shine) * alpha_byte_;
+        out.b = std::min(1.f, base_b * body + glint_b * shine) * alpha_byte_;
     }
 }
 
-void ModelRenderer::Rasterize(const ScreenVertex& a, const ScreenVertex& b, const ScreenVertex& c) {
+void ModelRenderer::Rasterize(const ScreenVertex& a, const ScreenVertex& b, const ScreenVertex& c, int band_top,
+                              int band_bottom, DirtyRect& dirty) {
     float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
     if (std::fabs(area) < 1e-4f) return;
     const ScreenVertex& v0 = a;
@@ -164,9 +177,9 @@ void ModelRenderer::Rasterize(const ScreenVertex& a, const ScreenVertex& b, cons
     float inv_area = 1.f / std::fabs(area);
 
     int x0 = std::max(0, static_cast<int>(std::floor(std::min({v0.x, v1.x, v2.x}))));
-    int y0 = std::max(0, static_cast<int>(std::floor(std::min({v0.y, v1.y, v2.y}))));
+    int y0 = std::max(band_top, static_cast<int>(std::floor(std::min({v0.y, v1.y, v2.y}))));
     int x1 = std::min(width_ - 1, static_cast<int>(std::ceil(std::max({v0.x, v1.x, v2.x}))));
-    int y1 = std::min(height_ - 1, static_cast<int>(std::ceil(std::max({v0.y, v1.y, v2.y}))));
+    int y1 = std::min(band_bottom, static_cast<int>(std::ceil(std::max({v0.y, v1.y, v2.y}))));
     if (x0 > x1 || y0 > y1) return;
 
     float ea[3] = {v1.y - v2.y, v2.y - v0.y, v0.y - v1.y};
@@ -197,36 +210,28 @@ void ModelRenderer::Rasterize(const ScreenVertex& a, const ScreenVertex& b, cons
             float& stored = depth_[row + x];
             if (inv_depth <= stored) continue;
             stored = inv_depth;
-            float r = std::clamp(w0 * v0.r + w1 * v1.r + w2 * v2.r, 0.f, 1.f);
-            float g = std::clamp(w0 * v0.g + w1 * v1.g + w2 * v2.g, 0.f, 1.f);
-            float bl = std::clamp(w0 * v0.b + w1 * v1.b + w2 * v2.b, 0.f, 1.f);
-            uint32_t alpha = static_cast<uint32_t>(alpha_ * 255.f);
-            color_[row + x] = (alpha << 24) |
-                              (static_cast<uint32_t>(r * alpha_ * 255.f) << 16) |
-                              (static_cast<uint32_t>(g * alpha_ * 255.f) << 8) |
-                              static_cast<uint32_t>(bl * alpha_ * 255.f);
+            uint32_t r = static_cast<uint32_t>(std::clamp(w0 * v0.r + w1 * v1.r + w2 * v2.r, 0.f, alpha_byte_));
+            uint32_t g = static_cast<uint32_t>(std::clamp(w0 * v0.g + w1 * v1.g + w2 * v2.g, 0.f, alpha_byte_));
+            uint32_t bl = static_cast<uint32_t>(std::clamp(w0 * v0.b + w1 * v1.b + w2 * v2.b, 0.f, alpha_byte_));
+            color_[row + x] = alpha_bits_ | (r << 16) | (g << 8) | bl;
             touched = true;
         }
     }
-    if (!touched) return;
-    if (max_x_ < min_x_) { min_x_ = x0; min_y_ = y0; max_x_ = x1; max_y_ = y1; return; }
-    min_x_ = std::min(min_x_, x0); min_y_ = std::min(min_y_, y0);
-    max_x_ = std::max(max_x_, x1); max_y_ = std::max(max_y_, y1);
+    if (touched) dirty.Add(x0, y0, x1, y1);
 }
 
 void ModelRenderer::Draw(const SkinnedModel& model, const BoneTransform* bones, const render::Camera& camera,
                          uint32_t rgba, Material material) {
     if (width_ <= 0 || height_ <= 0 || !camera.valid) return;
-    alpha_ = (rgba & 0xFF) / 255.f;
+    alpha_byte_ = static_cast<float>(rgba & 0xFF);
+    alpha_bits_ = (rgba & 0xFFu) << 24;
     Skin(model, bones);
     Shade(camera, rgba, material);
     const std::vector<uint32_t>& indices = model.indices;
+    visible_.clear();
     for (size_t t = 0; t + 2 < indices.size(); t += 3) {
         uint32_t i0 = indices[t], i1 = indices[t + 1], i2 = indices[t + 2];
-        const ScreenVertex& a = screen_[i0];
-        const ScreenVertex& b = screen_[i1];
-        const ScreenVertex& c = screen_[i2];
-        if (!a.valid || !b.valid || !c.valid) continue;
+        if (!screen_[i0].valid || !screen_[i1].valid || !screen_[i2].valid) continue;
         const float* p0 = &positions_[i0 * 3];
         const float* p1 = &positions_[i1 * 3];
         const float* p2 = &positions_[i2 * 3];
@@ -234,9 +239,22 @@ void ModelRenderer::Draw(const SkinnedModel& model, const BoneTransform* bones, 
         float e2x = p2[0] - p0[0], e2y = p2[1] - p0[1], e2z = p2[2] - p0[2];
         float fx = e1y * e2z - e1z * e2y, fy = e1z * e2x - e1x * e2z, fz = e1x * e2y - e1y * e2x;
         float facing = fx * (camera.eye.x - p0[0]) + fy * (camera.eye.y - p0[1]) + fz * (camera.eye.z - p0[2]);
-        if (facing <= 0.f) continue;
-        Rasterize(a, b, c);
+        if (facing > 0.f) visible_.push_back(static_cast<uint32_t>(t));
     }
+    DirtyRect band_dirty[kBands];
+    #pragma omp parallel for schedule(dynamic, 1) num_threads(kThreads)
+    for (int band = 0; band < kBands; band++) {
+        int top = band * height_ / kBands;
+        int bottom = (band + 1) * height_ / kBands - 1;
+        for (uint32_t t : visible_)
+            Rasterize(screen_[indices[t]], screen_[indices[t + 1]], screen_[indices[t + 2]], top, bottom, band_dirty[band]);
+    }
+    for (const DirtyRect& rect : band_dirty)
+        if (rect.Valid()) {
+            if (max_x_ < min_x_) { min_x_ = rect.x0; min_y_ = rect.y0; max_x_ = rect.x1; max_y_ = rect.y1; continue; }
+            min_x_ = std::min(min_x_, rect.x0); min_y_ = std::min(min_y_, rect.y0);
+            max_x_ = std::max(max_x_, rect.x1); max_y_ = std::max(max_y_, rect.y1);
+        }
 }
 
 void ModelRenderer::Paint(cairo_t* cr) {
@@ -246,8 +264,11 @@ void ModelRenderer::Paint(cairo_t* cr) {
     cairo_surface_t* surface = cairo_image_surface_create_for_data(origin, CAIRO_FORMAT_ARGB32,
                                                                    max_x_ - min_x_ + 1, max_y_ - min_y_ + 1, stride);
     cairo_save(cr);
+    cairo_scale(cr, 1.0 / kRenderScale, 1.0 / kRenderScale);
     cairo_set_source_surface(cr, surface, min_x_, min_y_);
-    cairo_paint(cr);
+    cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
+    cairo_rectangle(cr, min_x_, min_y_, max_x_ - min_x_ + 1, max_y_ - min_y_ + 1);
+    cairo_fill(cr);
     cairo_restore(cr);
     cairo_surface_destroy(surface);
 }

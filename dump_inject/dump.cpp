@@ -228,6 +228,9 @@ static bool DoDump() {
         {"CCSPlayerBase_CameraServices", {"m_iFOV"}},
         {"C_BaseModelEntity", {"m_Glow", "m_clrRender", "m_nRenderMode"}},
         {"CGlowProperty", {"m_iGlowType", "m_glowColorOverride", "m_bGlowing"}},
+        {"C_SmokeGrenadeProjectile", {"m_nSmokeEffectTickBegin", "m_bDidSmokeEffect", "m_vSmokeColor"}},
+        {"C_PostProcessingVolume", {"m_flMinExposure", "m_flMaxExposure", "m_bExposureControl"}},
+        {"C_BaseCSGrenade", {"m_flThrowStrength", "m_bPinPulled"}},
     };
 
     for (auto& t : targets) {

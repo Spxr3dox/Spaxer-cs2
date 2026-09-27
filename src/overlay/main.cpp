@@ -7,6 +7,10 @@
 #include "sdk/offsets.h"
 #include "sdk/game.h"
 #include "sdk/dumper.h"
+#include "sdk/visibility.h"
+#include "overlay/weather.h"
+#include "overlay/night_sky.h"
+#include "overlay/grenade.h"
 #include "render/camera.h"
 #include "overlay/world.h"
 #include <cmath>
@@ -279,6 +283,7 @@ static void DrawKeybinds(cairo_t* cr) {
         {"Crosshair",  g_cfg->bind_crosshair,  settings::Enabled(g_cfg->crosshair)},
         {"Thirdperson",g_cfg->bind_thirdperson, settings::Enabled(g_cfg->thirdperson)},
         {"Arrows",     g_cfg->bind_arrows,      settings::Enabled(g_cfg->arrows)},
+        {"Night mode", g_cfg->bind_night_mode,  settings::Enabled(g_cfg->night_mode)},
         {"Sound ESP",  g_cfg->bind_sound_esp,   settings::Enabled(g_cfg->sound_esp)},
         {"Weapon ESP", g_cfg->bind_weapon_esp,  settings::Enabled(g_cfg->esp_dropped_weapons)},
         {"Edit HUD",   g_cfg->bind_edit_hud,    settings::Enabled(g_cfg->edit_mode)},
@@ -664,48 +669,13 @@ static void DrawRadar(cairo_t* cr) {
     cairo_close_path(cr); cairo_fill(cr);
 }
 
-static void DrawGrenadeTrajectory(cairo_t* cr, int width, int height) {
-    if (!g_cfg || !settings::Enabled(g_cfg->grenade_trajectory)) return;
-    std::vector<GrenadePoint> path;
-    {
-        std::lock_guard<std::mutex> lk(g_hud.grenade_mtx);
-        path = g_hud.grenade_path;
-    }
-    if (path.size() < 2) return;
-    const render::Camera& cam = s_camera;
-    if (!cam.valid) return;
-    std::vector<std::pair<float, float>> screen;
-    std::vector<std::pair<float, float>> bounces;
-    screen.reserve(path.size());
-    for (size_t i = 0; i < path.size(); i++) {
-        const auto& p = path[i];
-        float sx, sy;
-        if (!cam.Project(p.x, p.y, p.z, sx, sy)) continue;
-        screen.push_back({sx, sy});
-        if (p.bounce && i + 1 < path.size()) bounces.push_back({sx, sy});
-    }
-    if (screen.size() < 2) return;
-    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
-    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
-    for (int pass = 0; pass < 2; pass++) {
-        if (pass == 0) { cairo_set_source_rgba(cr, 0, 0, 0, 0.6); cairo_set_line_width(cr, 4.0); }
-        else           { cairo_set_source_rgba(cr, 1.0, 0.62, 0.2, 0.95); cairo_set_line_width(cr, 2.0); }
-        cairo_move_to(cr, screen[0].first, screen[0].second);
-        for (size_t i = 1; i < screen.size(); i++) cairo_line_to(cr, screen[i].first, screen[i].second);
-        cairo_stroke(cr);
-    }
-    for (const auto& bounce : bounces) {
-        cairo_arc(cr, bounce.first, bounce.second, 3.5, 0, 6.2831853);
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.9);
-        cairo_fill(cr);
-    }
-    const auto& last = screen.back();
-    cairo_arc(cr, last.first, last.second, 5.0, 0, 6.2831853);
-    cairo_set_source_rgba(cr, 1.0, 0.3, 0.2, 0.95);
-    cairo_fill_preserve(cr);
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.9);
-    cairo_set_line_width(cr, 1.5);
-    cairo_stroke(cr);
+static void DrawAmbientTint(cairo_t* cr, int width, int height) {
+    if (!settings::Enabled(g_cfg->night_mode) || !settings::Enabled(g_cfg->ambient_tint)) return;
+    uint32_t rgba = g_cfg->ambient_tint_rgba;
+    cairo_set_source_rgba(cr, ((rgba >> 24) & 0xFF) / 255.0, ((rgba >> 16) & 0xFF) / 255.0, ((rgba >> 8) & 0xFF) / 255.0,
+                          (rgba & 0xFF) / 255.0);
+    cairo_rectangle(cr, 0, 0, width, height);
+    cairo_fill(cr);
 }
 
 static gboolean OnDraw(GtkWidget* w, cairo_t* cr, gpointer) {
@@ -728,11 +698,14 @@ static gboolean OnDraw(GtkWidget* w, cairo_t* cr, gpointer) {
     s_camera = g_hud.in_game.load() ? render::ReadCamera(a.width, a.height, std::clamp(g_cfg->render_lead_ms, 0, 200) / 1000.f) : render::Camera{};
     std::vector<world::LivePlayer> players;
     if (s_camera.valid) players = world::CapturePlayers(*g_cfg);
+    nightsky::Draw(cr, s_camera, *g_cfg);
+    DrawAmbientTint(cr, a.width, a.height);
+    weather::Draw(cr, s_camera, *g_cfg);
     world::DrawChams(cr, s_camera, players, *g_cfg);
     world::DrawEsp(cr, s_camera, players, *g_cfg);
     DrawDroppedItems(cr, a.width, a.height);
     DrawRadar(cr);
-    DrawGrenadeTrajectory(cr, a.width, a.height);
+    grenade::Draw(cr, s_camera, *g_cfg);
     world::DrawArrows(cr, s_camera, players, *g_cfg);
     DrawSoundEsp(cr, s_camera);
     DrawWatermark(cr);
@@ -1329,6 +1302,8 @@ static void PanicShutdown(int) {
     features::StopAimbot();
     features::StopRcs();
     features::StopMovement();
+    features::StopEffects();
+    nightsky::Shutdown();
     g_input.Shutdown();
     _exit(1);
 }
@@ -1394,6 +1369,9 @@ static gboolean ToggleWeaponEsp(gpointer) {
 static gboolean ToggleArrows(gpointer) {
     settings::ToggleEnabled(g_cfg->arrows); return G_SOURCE_REMOVE;
 }
+static gboolean ToggleNightMode(gpointer) {
+    settings::ToggleEnabled(g_cfg->night_mode); return G_SOURCE_REMOVE;
+}
 static gboolean ToggleGlow(gpointer) {
     settings::ToggleEnabled(g_cfg->glow); return G_SOURCE_REMOVE;
 }
@@ -1416,6 +1394,7 @@ static void FetchThread() {
             continue;
         }
         dumper::Run();
+        vis::Update();
         features::UpdatePlayer();
         features::UpdateBomb();
         features::UpdateEsp();
@@ -1500,7 +1479,7 @@ static int LinuxKeyFromGdk(uint32_t keyval) {
 
 static void HotkeyThread() {
     Display* d = XOpenDisplay(nullptr);
-    bool prev[16] = {};
+    bool prev[32] = {};
     while (s_running.load()) {
         struct { uint32_t kv; GSourceFunc fn; } binds[] = {
             { g_cfg->bind_toggle_gui, ToggleGui     },
@@ -1519,6 +1498,7 @@ static void HotkeyThread() {
             { g_cfg->bind_sound_esp,   ToggleSoundEsp },
             { g_cfg->bind_weapon_esp,  ToggleWeaponEsp },
             { g_cfg->bind_arrows,      ToggleArrows   },
+            { g_cfg->bind_night_mode,  ToggleNightMode },
         };
         char keys[32]{};
         if (d) XQueryKeymap(d, keys);
@@ -1589,6 +1569,7 @@ static void InstallCss() {
 }
 
 int main(int argc, char** argv) {
+    setenv("OMP_WAIT_POLICY", "PASSIVE", 0);
     XInitThreads();
     std::signal(SIGINT,  PanicShutdown);
     std::signal(SIGTERM, PanicShutdown);
@@ -1646,6 +1627,7 @@ int main(int argc, char** argv) {
     features::StartAimbot();
     features::StartRcs();
     features::StartMovement();
+    features::StartEffects();
     features::InitLua(g_cfg);
     std::thread ft(FetchThread);
     std::thread ht(HotkeyThread);
@@ -1663,6 +1645,8 @@ int main(int argc, char** argv) {
     features::StopAimbot();
     features::StopRcs();
     features::StopMovement();
+    features::StopEffects();
+    nightsky::Shutdown();
     features::ShutdownLua();
     g_input.Shutdown();
     return 0;

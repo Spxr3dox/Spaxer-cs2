@@ -35,20 +35,32 @@ public:
 
 private:
     struct ScreenVertex { float x, y, inv_depth, r, g, b; bool valid; };
+    struct DirtyRect {
+        int x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+        bool Valid() const { return x1 >= x0; }
+        void Add(int ax0, int ay0, int ax1, int ay1) {
+            if (!Valid()) { x0 = ax0; y0 = ay0; x1 = ax1; y1 = ay1; return; }
+            x0 = ax0 < x0 ? ax0 : x0; y0 = ay0 < y0 ? ay0 : y0;
+            x1 = ax1 > x1 ? ax1 : x1; y1 = ay1 > y1 ? ay1 : y1;
+        }
+    };
 
     void Skin(const SkinnedModel& model, const BoneTransform* bones);
     void Shade(const render::Camera& camera, uint32_t rgba, Material material);
-    void Rasterize(const ScreenVertex& a, const ScreenVertex& b, const ScreenVertex& c);
+    void Rasterize(const ScreenVertex& a, const ScreenVertex& b, const ScreenVertex& c, int band_top, int band_bottom,
+                   DirtyRect& dirty);
     void ClearDirty();
 
     int width_ = 0, height_ = 0;
     int min_x_ = 1, min_y_ = 1, max_x_ = 0, max_y_ = 0;
-    float alpha_ = 1.f;
+    float alpha_byte_ = 255.f;
+    uint32_t alpha_bits_ = 0xFF000000u;
     std::vector<uint32_t> color_;
     std::vector<float> depth_;
     std::vector<float> positions_;
     std::vector<float> normals_;
     std::vector<ScreenVertex> screen_;
+    std::vector<uint32_t> visible_;
 };
 
 }

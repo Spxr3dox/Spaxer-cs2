@@ -143,6 +143,18 @@ struct Settings {
     int32_t  aimbot_release_x100;
     uint32_t lua_reload_token;
     uint32_t auto_strafe_mode;
+    uint32_t autowall;
+    int32_t  autowall_min_damage;
+    uint32_t night_mode;
+    int32_t  night_mode_strength;
+    uint32_t bind_night_mode;
+    uint32_t weather_mode;
+    int32_t  weather_density;
+    uint32_t night_sky;
+    uint32_t ambient_tint;
+    uint32_t ambient_tint_rgba;
+    int32_t  world_brightness;
+    int32_t  smoke_color_strength;
 };
 
 namespace settings {

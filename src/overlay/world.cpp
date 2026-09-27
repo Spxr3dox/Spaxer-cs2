@@ -1,5 +1,6 @@
 #include "overlay/world.h"
 #include "config/settings.h"
+#include "sdk/visibility.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -9,6 +10,7 @@
 namespace world {
 
 static constexpr int kSkeletonBones = 23;
+static constexpr int kVisibilityBones[] = {7, 5, 3, 1, 11, 15, 19, 22};
 static constexpr float kPi = 3.14159265358979f;
 
 struct Rgb { double r, g, b; };
@@ -41,6 +43,9 @@ std::vector<LivePlayer> CapturePlayers(const Settings& settings) {
     }
     bool want_models = settings::Enabled(settings.chams);
     float lead_seconds = std::clamp(settings.render_lead_ms, 0, 200) / 1000.f;
+    uintptr_t local_pawn = game::LocalPawn();
+    bool have_local_eye = local_pawn && vis::Ready();
+    Vec3 local_eye = have_local_eye ? game::EyePosition(local_pawn) : Vec3{};
     std::vector<LivePlayer> players;
     players.reserve(entries.size());
     for (const EspEntry& entry : entries) {
@@ -66,6 +71,17 @@ std::vector<LivePlayer> CapturePlayers(const Settings& settings) {
         if (!player.Bone(1, pelvis)) {
             player.bones.clear();
             player.model = nullptr;
+        }
+        if (have_local_eye) {
+            player.info.visible = false;
+            player.info.spotted_valid = true;
+            for (int bone : kVisibilityBones) {
+                Vec3 point;
+                if (player.Bone(bone, point) && vis::LineOfSight(local_eye, point)) {
+                    player.info.visible = true;
+                    break;
+                }
+            }
         }
         if (lead_seconds > 0.f && off::m_vecVelocity) {
             Vec3 velocity = g_proc.Read<Vec3>(entry.pawn + off::m_vecVelocity);

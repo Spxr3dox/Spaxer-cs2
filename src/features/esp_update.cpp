@@ -283,60 +283,6 @@ void UpdateEsp() {
         g_hud.dropped_items.clear();
     }
 
-    if (cfg && settings::Enabled(cfg->grenade_trajectory) && local_pawn && off::m_angEyeAngles) {
-        int act_idx = game::ActiveWeaponDefinitionIndex(local_pawn);
-        bool is_grenade = (act_idx >= 43 && act_idx <= 48);
-        if (is_grenade) {
-            constexpr float rad = 3.14159265358979323846f / 180.f;
-            Vec3 eye_pos = game::EyePosition(local_pawn);
-            Vec3 eye_ang = g_proc.Read<Vec3>(local_pawn + off::m_angEyeAngles);
-            float pitch = eye_ang.x;
-            if (pitch < -90.f) pitch += 360.f;
-            else if (pitch > 90.f) pitch -= 360.f;
-            pitch -= (90.f - std::fabs(pitch)) * 10.f / 90.f;
-            float cp = cosf(pitch * rad), sp = sinf(pitch * rad);
-            float cy = cosf(eye_ang.y * rad), sy = sinf(eye_ang.y * rad);
-            Vec3 forward{cp * cy, cp * sy, -sp};
-            Vec3 player_vel = off::m_vecVelocity ? g_proc.Read<Vec3>(local_pawn + off::m_vecVelocity) : Vec3{};
-            constexpr float throw_speed = 675.f, gravity = 320.f, dt = 0.01f, elasticity = 0.45f;
-            bool timed = act_idx == 43 || act_idx == 44;
-            bool fire = act_idx == 46 || act_idx == 48;
-            float fuse_time = timed ? 1.5f : 3.0f;
-            float floor_z = game::Origin(local_pawn).z;
-            Vec3 vel{forward.x * throw_speed + player_vel.x * 1.25f,
-                     forward.y * throw_speed + player_vel.y * 1.25f,
-                     forward.z * throw_speed + player_vel.z * 1.25f};
-            Vec3 curr{eye_pos.x + forward.x * 16.f, eye_pos.y + forward.y * 16.f, eye_pos.z + forward.z * 16.f};
-            std::vector<GrenadePoint> path;
-            path.reserve(320);
-            path.push_back({curr.x, curr.y, curr.z, false});
-            for (float t = 0.f; t < fuse_time; t += dt) {
-                curr.x += vel.x * dt;
-                curr.y += vel.y * dt;
-                curr.z += vel.z * dt - 0.5f * gravity * dt * dt;
-                vel.z -= gravity * dt;
-                if (curr.z <= floor_z && vel.z < 0.f) {
-                    curr.z = floor_z;
-                    path.push_back({curr.x, curr.y, curr.z, true});
-                    if (fire) break;
-                    vel.x *= elasticity;
-                    vel.y *= elasticity;
-                    vel.z = -vel.z * elasticity;
-                    if (vel.x * vel.x + vel.y * vel.y + vel.z * vel.z < 20.f * 20.f) break;
-                    continue;
-                }
-                path.push_back({curr.x, curr.y, curr.z, false});
-            }
-            std::lock_guard<std::mutex> lk_gr(g_hud.grenade_mtx);
-            g_hud.grenade_path.swap(path);
-        } else {
-            std::lock_guard<std::mutex> lk_gr(g_hud.grenade_mtx);
-            g_hud.grenade_path.clear();
-        }
-    } else {
-        std::lock_guard<std::mutex> lk_gr(g_hud.grenade_mtx);
-        g_hud.grenade_path.clear();
-    }
 }
 
 }

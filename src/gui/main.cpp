@@ -13,8 +13,10 @@
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cmath>
 #include <cstring>
 #include <string>
+#include <vector>
 #include <filesystem>
 
 static Settings* g_cfg = nullptr;
@@ -24,21 +26,65 @@ static std::atomic<bool> g_running{true};
 static GtkWidget* BuildGui();
 
 struct BindCtx { GtkButton* btn; uint32_t* field; };
+struct SwitchBinding { GtkSwitch* sw; uint32_t* field; };
+
+static std::vector<SwitchBinding> g_switches;
+struct ColorBinding { GtkColorChooser* chooser; uint32_t* field; };
+struct SliderBinding { GtkRange* range; int32_t* field; double scale; };
+static std::vector<ColorBinding> g_colors;
+static std::vector<SliderBinding> g_sliders;
+static std::vector<BindCtx*> g_bind_buttons;
+static bool g_capturing_bind = false;
+
+static void SetBindLabel(GtkButton* btn, uint32_t kv) {
+    const char* n = gdk_keyval_name(kv);
+    gtk_button_set_label(btn, kv ? (n ? n : "?") : "bind");
+}
+
+static gboolean SyncWidgetsWithSettings(gpointer) {
+    for (const SwitchBinding& binding : g_switches) {
+        bool enabled = settings::Enabled(*binding.field);
+        if (gtk_switch_get_active(binding.sw) != enabled) gtk_switch_set_active(binding.sw, enabled);
+    }
+    if (!g_capturing_bind)
+        for (BindCtx* ctx : g_bind_buttons) SetBindLabel(ctx->btn, *ctx->field);
+    for (const ColorBinding& binding : g_colors) {
+        GdkRGBA shown;
+        gtk_color_chooser_get_rgba(binding.chooser, &shown);
+        uint32_t rgba = *binding.field;
+        GdkRGBA wanted{((rgba >> 24) & 0xFF) / 255.0, ((rgba >> 16) & 0xFF) / 255.0, ((rgba >> 8) & 0xFF) / 255.0, (rgba & 0xFF) / 255.0};
+        if (std::fabs(shown.red - wanted.red) + std::fabs(shown.green - wanted.green) + std::fabs(shown.blue - wanted.blue) +
+            std::fabs(shown.alpha - wanted.alpha) > 0.01)
+            gtk_color_chooser_set_rgba(binding.chooser, &wanted);
+    }
+    for (const SliderBinding& binding : g_sliders) {
+        double wanted = *binding.field / binding.scale;
+        if (std::fabs(gtk_range_get_value(binding.range) - wanted) > 1e-6) gtk_range_set_value(binding.range, wanted);
+    }
+    return G_SOURCE_CONTINUE;
+}
 
 static gboolean OnBindKey(GtkWidget* w, GdkEventKey* e, gpointer d) {
     BindCtx* b = static_cast<BindCtx*>(d);
     guint kv = e->keyval;
+    guint base_layout_kv = 0;
+    if (gdk_keymap_translate_keyboard_state(gdk_keymap_get_for_display(gdk_display_get_default()),
+                                            e->hardware_keycode, GdkModifierType(0), 0,
+                                            &base_layout_kv, nullptr, nullptr, nullptr) && base_layout_kv)
+        kv = gdk_keyval_to_lower(base_layout_kv);
     if (kv == GDK_KEY_Escape) kv = 0;
     *b->field = kv;
     const char* n = gdk_keyval_name(kv);
     gtk_button_set_label(b->btn, kv ? (n ? n : "?") : "None");
     g_signal_handlers_disconnect_by_func(w, (gpointer)OnBindKey, d);
+    g_capturing_bind = false;
     return TRUE;
 }
 
 static void OnBindClicked(GtkButton* btn, gpointer d) {
     BindCtx* b = static_cast<BindCtx*>(d);
     gtk_button_set_label(btn, "…");
+    g_capturing_bind = true;
     GtkWidget* top = gtk_widget_get_toplevel(GTK_WIDGET(btn));
     g_signal_connect(top, "key-press-event", G_CALLBACK(OnBindKey), b);
 }
@@ -50,8 +96,8 @@ static GtkWidget* MakeBindBtn(uint32_t* field) {
     gtk_widget_set_size_request(btn, 78, 26);
     gtk_widget_set_valign(btn, GTK_ALIGN_CENTER);
     BindCtx* ctx = new BindCtx{GTK_BUTTON(btn), field};
+    g_bind_buttons.push_back(ctx);
     g_signal_connect(btn, "clicked", G_CALLBACK(OnBindClicked), ctx);
-    g_signal_connect(btn, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer d) { delete static_cast<BindCtx*>(d); }), ctx);
     return btn;
 }
 
@@ -74,6 +120,7 @@ static GtkWidget* MakeRow(const char* label, uint32_t* toggle, uint32_t* bind_fi
         }), toggle);
         gtk_widget_set_valign(sw, GTK_ALIGN_CENTER);
         gtk_box_pack_start(GTK_BOX(row), sw, FALSE, FALSE, 0);
+        g_switches.push_back({GTK_SWITCH(sw), toggle});
     }
     return row;
 }
@@ -92,6 +139,7 @@ static GtkWidget* MakeSliderRow(const char* label, int32_t* field, int min, int 
     g_signal_connect(scale, "value-changed", G_CALLBACK(+[](GtkRange* r, gpointer d) {
         *static_cast<int32_t*>(d) = (int32_t)gtk_range_get_value(r);
     }), field);
+    g_sliders.push_back({GTK_RANGE(scale), field, 1.0});
     gtk_box_pack_start(GTK_BOX(row), lbl, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(row), scale, TRUE, TRUE, 0);
     return row;
@@ -115,6 +163,7 @@ static GtkWidget* MakeFovSliderRow(const char* label, int32_t* field_x100) {
     g_signal_connect(scale, "value-changed", G_CALLBACK(+[](GtkRange* r, gpointer d) {
         *static_cast<int32_t*>(d) = static_cast<int32_t>(gtk_range_get_value(r) * 100.0 + 0.5);
     }), field_x100);
+    g_sliders.push_back({GTK_RANGE(scale), field_x100, 100.0});
     gtk_box_pack_start(GTK_BOX(row), lbl, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(row), scale, TRUE, TRUE, 0);
     return row;
@@ -158,6 +207,7 @@ static GtkWidget* MakeColorRow(const char* label, uint32_t* field) {
     c.alpha = ( rgba        & 0xFF) / 255.0;
     gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(btn), &c);
     gtk_color_chooser_set_use_alpha(GTK_COLOR_CHOOSER(btn), TRUE);
+    g_colors.push_back({GTK_COLOR_CHOOSER(btn), field});
 
     g_signal_connect(btn, "color-set", G_CALLBACK(+[](GtkColorButton* b, gpointer d) {
         GdkRGBA col;
@@ -599,6 +649,11 @@ static void PopulateScriptsList(GtkBox* target) {
 }
 
 static GtkWidget* BuildGui() {
+    for (BindCtx* ctx : g_bind_buttons) delete ctx;
+    g_bind_buttons.clear();
+    g_switches.clear();
+    g_colors.clear();
+    g_sliders.clear();
     GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(win), "spaxer");
     gtk_window_set_role(GTK_WINDOW(win), "spaxer-gui");
@@ -682,6 +737,8 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(tb), MakeRow("Aim correction", &g_cfg->trigger_aim_correction,  nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeRow("Crouch fire",    &g_cfg->trigger_shift_fire,      nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeRow("Flash check",    &g_cfg->trigger_flash_check,     nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(tb), MakeRow("Autowall",       &g_cfg->autowall,                nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(tb), MakeSliderRow("Min damage", &g_cfg->autowall_min_damage, 1, 100, 1), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeSliderRow("Hitchance",  &g_cfg->trigger_hitchance, 0, 100, 1), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeSliderRow("Delay (ms)", &g_cfg->trigger_delay_ms, 0, 500, 5), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeFovSliderRow("FOV", &g_cfg->trigger_fov_x100), FALSE, FALSE, 0);
@@ -774,6 +831,20 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(cross), MakeRow("Sniper crosshair", &g_cfg->sniper_crosshair, nullptr),                FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(box), cross, FALSE, FALSE, 0);
 
+        GtkWidget* world_card = MakeCard("WORLD");
+        gtk_box_pack_start(GTK_BOX(world_card), MakeSliderRow("Brightness %", &g_cfg->world_brightness, 10, 400, 5), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(world_card), MakeRow("Night mode", &g_cfg->night_mode, &g_cfg->bind_night_mode), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(world_card), MakeSliderRow("Night strength", &g_cfg->night_mode_strength, 0, 100, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(world_card), MakeRow("Night sky (stars, moon)", &g_cfg->night_sky, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(world_card), MakeRow("Ambient tint", &g_cfg->ambient_tint, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(world_card), MakeColorRow("Tint color", &g_cfg->ambient_tint_rgba), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(box), world_card, FALSE, FALSE, 0);
+
+        GtkWidget* weather = MakeCard("WEATHER");
+        gtk_box_pack_start(GTK_BOX(weather), MakeComboRow("Effect", &g_cfg->weather_mode, {"Off", "Rain", "Snow", "Ash", "Embers"}), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(weather), MakeSliderRow("Density", &g_cfg->weather_density, 5, 100, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(box), weather, FALSE, FALSE, 0);
+
         gtk_stack_add_named(GTK_STACK(g_stack), page, "render");
         AddSidebarItemSvg(sidebar, s_svg_render.c_str(), "render", "Render");
     }
@@ -786,6 +857,7 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(uns), MakeRow("No smoke",      &g_cfg->no_smoke,             nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(uns), MakeRow("Smoke recolor", &g_cfg->smoke_color_enabled,  nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(uns), MakeColorRow("Smoke color", &g_cfg->smoke_color_rgba),            FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(uns), MakeSliderRow("Smoke strength %", &g_cfg->smoke_color_strength, 10, 300, 5), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(box), uns, FALSE, FALSE, 0);
         GtkWidget* radar = MakeCard("RADAR HACK");
         gtk_box_pack_start(GTK_BOX(radar), MakeRow("Enabled", &g_cfg->radar_hack, nullptr), FALSE, FALSE, 0);
@@ -928,6 +1000,7 @@ int main(int argc, char** argv) {
     sigemptyset(&sa.sa_mask);
     sigaction(SIGUSR1, &sa, nullptr);
     g_timeout_add(50, CheckToggleFlag, nullptr);
+    g_timeout_add(200, SyncWidgetsWithSettings, nullptr);
     InstallCss();
     g_win = BuildGui();
     gtk_widget_show_all(g_win);

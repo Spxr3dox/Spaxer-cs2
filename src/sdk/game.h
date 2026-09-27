@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <cmath>
+#include <cstring>
 #include "memory/process.h"
 #include "sdk/offsets.h"
 
@@ -95,24 +96,43 @@ inline Vec3 BonePosition(uintptr_t pawn, int bone, float fallback_height) {
     return BoneNearOrigin(position, origin) ? position : fallback;
 }
 
-inline int ActiveWeaponDefinitionIndex(uintptr_t pawn) {
-    if (!pawn || !off::m_pWeaponServices || !off::m_hActiveWeapon ||
-        !off::m_AttributeManager || !off::m_Item || !off::m_iItemDefinitionIndex)
-        return 0;
+inline uintptr_t ActiveWeapon(uintptr_t pawn) {
+    if (!pawn || !off::m_pWeaponServices || !off::m_hActiveWeapon) return 0;
     uintptr_t services = g_proc.Read<uintptr_t>(pawn + off::m_pWeaponServices);
     uint32_t handle = services ? g_proc.Read<uint32_t>(services + off::m_hActiveWeapon) : 0;
-    uintptr_t weapon = EntityFromList(EntityList(), handle & 0x7FFF);
+    if (!handle || handle == 0xFFFFFFFF) return 0;
+    return EntityFromList(EntityList(), handle & 0x7FFF);
+}
+
+inline int ActiveWeaponDefinitionIndex(uintptr_t pawn) {
+    if (!off::m_AttributeManager || !off::m_Item || !off::m_iItemDefinitionIndex) return 0;
+    uintptr_t weapon = ActiveWeapon(pawn);
     return weapon ? g_proc.Read<int>(weapon + off::m_AttributeManager + off::m_Item + off::m_iItemDefinitionIndex) : 0;
+}
+
+inline constexpr uintptr_t kEntityIdentity = 0x10;
+inline constexpr uintptr_t kIdentityDesignerName = 0x20;
+
+inline bool DesignerName(uintptr_t entity, char* out, size_t size) {
+    out[0] = 0;
+    uintptr_t identity = g_proc.Read<uintptr_t>(entity + kEntityIdentity);
+    if (!identity) return false;
+    uintptr_t name = g_proc.Read<uintptr_t>(identity + kIdentityDesignerName);
+    if (!name || !g_proc.ReadBytes(name, out, size - 1)) return false;
+    out[size - 1] = 0;
+    return true;
+}
+
+inline bool DesignerNameIs(uintptr_t entity, const char* expected) {
+    char buffer[40];
+    return DesignerName(entity, buffer, sizeof(buffer)) && std::strcmp(buffer, expected) == 0;
 }
 
 inline uintptr_t PlantedC4() {
     if (!off::g_EntityListPtr || !off::m_bBombTicking) return 0;
-    for (int i = 64; i < 2048; i++) {
+    for (int i = 65; i < 2048; i++) {
         uintptr_t ent = EntityFromList(off::g_EntityListPtr, i);
-        if (!ent) continue;
-        bool tick = g_proc.Read<bool>(ent + off::m_bBombTicking);
-        if (!tick) continue;
-        return ent;
+        if (ent && DesignerNameIs(ent, "planted_c4")) return ent;
     }
     return 0;
 }

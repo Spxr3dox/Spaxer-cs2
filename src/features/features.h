@@ -18,6 +18,8 @@ namespace features {
     void StartRcs();
     void StopRcs();
     void ApplyUnsafe();
+    void StartEffects();
+    void StopEffects();
     void ApplyGlow();
     void ApplyChams();
     void ApplyRadarHack();

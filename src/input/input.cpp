@@ -62,6 +62,8 @@ static int CreateKbd() {
 }
 
 void Input::Shutdown() {
+    for (int key_code : {KEY_SPACE, KEY_A, KEY_D})
+        if (VirtualKeyState(key_code)->exchange(false)) FakeKey(key_code, false);
     if (s_kbd_fd >= 0) {
         input_event ev{}; ev.type = EV_KEY;
         for (int code : {KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_A, KEY_D, KEY_SPACE}) {
@@ -309,25 +311,55 @@ void Input::SnapTap() {
     SetSnapKey(KEY_D, want_d, m_snap_virt_d);
 }
 
-void Input::SetAutoStrafe(int direction) {
-    direction = direction < 0 ? -1 : direction > 0 ? 1 : 0;
-    int previous = m_strafe_direction.exchange(direction);
-    if (previous == direction) return;
-    EnsureKbd();
-    if (s_kbd_fd >= 0) {
-        if (previous < 0) EmitKey(KEY_A, 0);
-        if (previous > 0) EmitKey(KEY_D, 0);
-        if (direction < 0) EmitKey(KEY_A, 1);
-        if (direction > 0) EmitKey(KEY_D, 1);
+static KeySym KeySymFor(int key_code) {
+    switch (key_code) {
+        case KEY_SPACE: return XK_space;
+        case KEY_A: return XK_a;
+        case KEY_D: return XK_d;
+        default: return NoSymbol;
+    }
+}
+
+void Input::FakeKey(int key_code, bool down) {
+    if (m_display) {
+        Display* display = static_cast<Display*>(m_display);
+        KeyCode keycode = XKeysymToKeycode(display, KeySymFor(key_code));
+        if (!keycode) return;
+        XTestFakeKeyEvent(display, keycode, down ? True : False, CurrentTime);
+        XFlush(display);
         return;
     }
-    Display* display = static_cast<Display*>(m_display);
-    if (!display) return;
-    if (previous < 0) XTestFakeKeyEvent(display, XKeysymToKeycode(display, XK_a), False, CurrentTime);
-    if (previous > 0) XTestFakeKeyEvent(display, XKeysymToKeycode(display, XK_d), False, CurrentTime);
-    if (direction < 0) XTestFakeKeyEvent(display, XKeysymToKeycode(display, XK_a), True, CurrentTime);
-    if (direction > 0) XTestFakeKeyEvent(display, XKeysymToKeycode(display, XK_d), True, CurrentTime);
-    XFlush(display);
+    EnsureKbd();
+    EmitKey(key_code, down ? 1 : 0);
+}
+
+void Input::SetVirtualKey(int key_code, bool down) {
+    std::atomic<bool>* held = VirtualKeyState(key_code);
+    if (!held || held->load() == down) return;
+    if (!down && IsPhysicalKeyDown(key_code)) return;
+    FakeKey(key_code, down);
+    held->store(down);
+}
+
+void Input::ForceVirtualKey(int key_code, bool down) {
+    std::atomic<bool>* held = VirtualKeyState(key_code);
+    if (!held) return;
+    FakeKey(key_code, down);
+    held->store(down);
+}
+
+std::atomic<bool>* Input::VirtualKeyState(int key_code) {
+    switch (key_code) {
+        case KEY_SPACE: return &m_virtual_space;
+        case KEY_A: return &m_virtual_a;
+        case KEY_D: return &m_virtual_d;
+        default: return nullptr;
+    }
+}
+
+void Input::SetAutoStrafe(int direction) {
+    SetVirtualKey(KEY_A, direction < 0);
+    SetVirtualKey(KEY_D, direction > 0);
 }
 
 void Input::MouseMove(int dx, int dy) {
