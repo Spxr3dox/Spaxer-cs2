@@ -17,6 +17,12 @@ std::mutex g_sound_steps_mtx;
 std::vector<SoundStep> g_sound_steps;
 static std::vector<RawStep> s_raw_steps;
 static std::array<std::chrono::steady_clock::time_point, 65> s_last_step{};
+static std::array<bool, 65> s_was_airborne{};
+
+constexpr float kHearingRange = 1100.f;
+constexpr float kRunSpeed = 135.f;
+constexpr float kStepRadius = 50.f;
+constexpr float kLandingRadius = 80.f;
 
 static void PublishSteps(std::vector<SoundStep> steps) {
     std::lock_guard<std::mutex> lock(g_sound_steps_mtx);
@@ -35,6 +41,8 @@ void UpdateSoundEsp() {
     uintptr_t local_controller = game::LocalController();
     if (!local_controller) return;
     int local_team = game::Team(local_controller);
+    uintptr_t local_pawn = game::LocalPawn();
+    Vec3 listener = local_pawn ? game::EyePosition(local_pawn) : Vec3{};
 
     auto now = std::chrono::steady_clock::now();
 
@@ -54,11 +62,20 @@ void UpdateSoundEsp() {
         Vec3 pos = game::Origin(pawn);
         Vec3 vel = g_proc.Read<Vec3>(pawn + off::m_vecVelocity);
         float speed = std::sqrt(vel.x * vel.x + vel.y * vel.y);
+        bool grounded = off::m_fFlags && (g_proc.Read<uint32_t>(pawn + off::m_fFlags) & 1u);
+        bool landed = grounded && s_was_airborne[i];
+        s_was_airborne[i] = !grounded;
+
+        float dx = pos.x - listener.x, dy = pos.y - listener.y, dz = pos.z - listener.z;
+        if (!local_pawn || dx * dx + dy * dy + dz * dz > kHearingRange * kHearingRange) continue;
 
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - s_last_step[i]).count();
-        if (speed > 135.f && elapsed > 320) {
+        if (landed) {
             s_last_step[i] = now;
-            s_raw_steps.push_back(RawStep{pos, now, 50.f});
+            s_raw_steps.push_back(RawStep{pos, now, kLandingRadius});
+        } else if (grounded && speed > kRunSpeed && elapsed > 320) {
+            s_last_step[i] = now;
+            s_raw_steps.push_back(RawStep{pos, now, kStepRadius});
         }
     }
 
