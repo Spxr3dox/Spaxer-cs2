@@ -572,11 +572,26 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Player weapon",      &g_cfg->esp_weapon,          nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Skeleton",           &g_cfg->esp_skeleton,        nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Head circle",        &g_cfg->esp_head_circle,     nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(esp), MakeRow("Sound ESP",          &g_cfg->sound_esp,           nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(esp), MakeRow("Arrows (Cursor)",    &g_cfg->arrows,              &g_cfg->bind_arrows),  FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(esp), MakeRow("Weapon ESP (floor)", &g_cfg->esp_dropped_weapons, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Grenade Trajectory", &g_cfg->grenade_trajectory,  nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(box), esp, FALSE, FALSE, 0);
+
+        GtkWidget* sound = MakeCard("SOUND ESP");
+        gtk_box_pack_start(GTK_BOX(sound), MakeRow("Enabled", &g_cfg->sound_esp, &g_cfg->bind_sound_esp), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(sound), MakeColorRow("Color", &g_cfg->sound_esp_rgba), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(box), sound, FALSE, FALSE, 0);
+
+        GtkWidget* weapons = MakeCard("WEAPON ESP");
+        gtk_box_pack_start(GTK_BOX(weapons), MakeRow("Enabled", &g_cfg->esp_dropped_weapons, &g_cfg->bind_weapon_esp), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(weapons), MakeSliderRow("Max distance (m)", &g_cfg->weapon_esp_distance_m, 5, 150, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(weapons), MakeColorRow("Color", &g_cfg->weapon_esp_rgba), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(box), weapons, FALSE, FALSE, 0);
+
+        GtkWidget* arrows = MakeCard("ARROWS");
+        gtk_box_pack_start(GTK_BOX(arrows), MakeRow("Enabled", &g_cfg->arrows, &g_cfg->bind_arrows), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(arrows), MakeSliderRow("Radius", &g_cfg->arrows_radius, 40, 500, 5), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(arrows), MakeSliderRow("Size", &g_cfg->arrows_size, 6, 32, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(arrows), MakeColorRow("Color", &g_cfg->arrows_rgba), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(box), arrows, FALSE, FALSE, 0);
 
         GtkWidget* glow = MakeCard("GLOW");
         gtk_box_pack_start(GTK_BOX(glow), MakeRow("Enabled",    &g_cfg->glow,      &g_cfg->bind_glow), FALSE, FALSE, 0);

@@ -279,6 +279,8 @@ static void DrawKeybinds(cairo_t* cr) {
         {"Crosshair",  g_cfg->bind_crosshair,  settings::Enabled(g_cfg->crosshair)},
         {"Thirdperson",g_cfg->bind_thirdperson, settings::Enabled(g_cfg->thirdperson)},
         {"Arrows",     g_cfg->bind_arrows,      settings::Enabled(g_cfg->arrows)},
+        {"Sound ESP",  g_cfg->bind_sound_esp,   settings::Enabled(g_cfg->sound_esp)},
+        {"Weapon ESP", g_cfg->bind_weapon_esp,  settings::Enabled(g_cfg->esp_dropped_weapons)},
         {"Edit HUD",   g_cfg->bind_edit_hud,    settings::Enabled(g_cfg->edit_mode)},
     };
 
@@ -539,21 +541,30 @@ static void DrawSoundEsp(cairo_t* cr, const render::Camera& cam) {
         std::lock_guard<std::mutex> lock(features::g_sound_steps_mtx);
         steps = features::g_sound_steps;
     }
-    cairo_set_line_width(cr, 1.5);
+    constexpr int kSegments = 40;
+    uint32_t rgba = g_cfg->sound_esp_rgba;
+    double r = ((rgba >> 24) & 0xFF) / 255.0, g = ((rgba >> 16) & 0xFF) / 255.0, b = ((rgba >> 8) & 0xFF) / 255.0;
+    double base_alpha = (rgba & 0xFF) / 255.0;
+    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
     for (const auto& step : steps) {
-        if (step.alpha <= 0.01f) continue;
-        Vec3 position{step.x, step.y, step.z};
-        float sx, sy;
-        if (!cam.Project(position, sx, sy)) continue;
-        double radius = step.radius * cam.PixelsPerUnit(position);
-        if (radius < 1.0) continue;
+        if (step.alpha <= 0.01f || step.radius < 1.f) continue;
         cairo_new_path(cr);
-        cairo_save(cr);
-        cairo_translate(cr, sx, sy);
-        cairo_scale(cr, 1.0, 0.45);
-        cairo_arc(cr, 0, 0, radius, 0, 2 * M_PI);
-        cairo_restore(cr);
-        cairo_set_source_rgba(cr, 0.0, 0.8, 1.0, step.alpha);
+        bool pen_down = false;
+        for (int i = 0; i <= kSegments; i++) {
+            float angle = static_cast<float>(i) / kSegments * 2.f * static_cast<float>(M_PI);
+            Vec3 point{step.x + step.radius * std::cos(angle), step.y + step.radius * std::sin(angle), step.z + 1.f};
+            float sx, sy;
+            if (!cam.Project(point, sx, sy)) { pen_down = false; continue; }
+            if (pen_down) cairo_line_to(cr, sx, sy);
+            else cairo_move_to(cr, sx, sy);
+            pen_down = true;
+        }
+        double alpha = base_alpha * step.alpha / 0.75;
+        cairo_set_line_width(cr, 3.5);
+        cairo_set_source_rgba(cr, 0, 0, 0, 0.35 * alpha);
+        cairo_stroke_preserve(cr);
+        cairo_set_line_width(cr, 1.8);
+        cairo_set_source_rgba(cr, r, g, b, alpha);
         cairo_stroke(cr);
     }
 }
@@ -567,7 +578,8 @@ static void DrawDroppedItems(cairo_t* cr, int width, int height) {
         std::lock_guard<std::mutex> lk(g_hud.items_mtx);
         items = g_hud.dropped_items;
     }
-    constexpr float max_distance = 1500.f;
+    float max_distance = std::max(1, g_cfg->weapon_esp_distance_m) / 0.01905f;
+    uint32_t rgba = g_cfg->weapon_esp_rgba;
     cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
     cairo_set_font_size(cr, 11);
     for (const auto& item : items) {
@@ -585,7 +597,8 @@ static void DrawDroppedItems(cairo_t* cr, int width, int height) {
         double ty = sy;
         cairo_set_source_rgba(cr, 0, 0, 0, 0.85);
         cairo_move_to(cr, tx + 1, ty + 1); cairo_show_text(cr, label);
-        cairo_set_source_rgba(cr, 0.35, 0.85, 1.0, 0.95);
+        cairo_set_source_rgba(cr, ((rgba >> 24) & 0xFF) / 255.0, ((rgba >> 16) & 0xFF) / 255.0,
+                              ((rgba >> 8) & 0xFF) / 255.0, (rgba & 0xFF) / 255.0);
         cairo_move_to(cr, tx, ty); cairo_show_text(cr, label);
     }
 }
@@ -1356,6 +1369,15 @@ static gboolean ToggleAimbot(gpointer) {
 static gboolean ToggleChams(gpointer) {
     settings::ToggleEnabled(g_cfg->chams); return G_SOURCE_REMOVE;
 }
+static gboolean ToggleSoundEsp(gpointer) {
+    settings::ToggleEnabled(g_cfg->sound_esp); return G_SOURCE_REMOVE;
+}
+static gboolean ToggleWeaponEsp(gpointer) {
+    settings::ToggleEnabled(g_cfg->esp_dropped_weapons); return G_SOURCE_REMOVE;
+}
+static gboolean ToggleArrows(gpointer) {
+    settings::ToggleEnabled(g_cfg->arrows); return G_SOURCE_REMOVE;
+}
 static gboolean ToggleGlow(gpointer) {
     settings::ToggleEnabled(g_cfg->glow); return G_SOURCE_REMOVE;
 }
@@ -1478,6 +1500,9 @@ static void HotkeyThread() {
             { g_cfg->bind_aimbot,      ToggleAimbot   },
             { g_cfg->bind_glow,        ToggleGlow     },
             { g_cfg->bind_chams,       ToggleChams    },
+            { g_cfg->bind_sound_esp,   ToggleSoundEsp },
+            { g_cfg->bind_weapon_esp,  ToggleWeaponEsp },
+            { g_cfg->bind_arrows,      ToggleArrows   },
         };
         char keys[32]{};
         if (d) XQueryKeymap(d, keys);

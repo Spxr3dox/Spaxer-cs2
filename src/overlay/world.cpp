@@ -338,7 +338,11 @@ void DrawEsp(cairo_t* cr, const render::Camera& camera, const std::vector<LivePl
 
 void DrawArrows(cairo_t* cr, const render::Camera& camera, const std::vector<LivePlayer>& players, const Settings& settings) {
     if (!settings::Enabled(settings.arrows) || !camera.valid) return;
-    double cx = camera.width * 0.5, cy = camera.height * 0.5, radius = 140.0;
+    double cx = camera.width * 0.5, cy = camera.height * 0.5;
+    double radius = std::clamp(settings.arrows_radius, 40, 500);
+    double size = std::clamp(settings.arrows_size, 6, 32);
+    Rgb color = UnpackRgb(settings.arrows_rgba);
+    double color_alpha = (settings.arrows_rgba & 0xFF) / 255.0;
     int local_team = g_hud.local_team.load();
     for (const LivePlayer& player : players) {
         if (!player.Enemy(local_team)) continue;
@@ -349,14 +353,12 @@ void DrawArrows(cairo_t* cr, const render::Camera& camera, const std::vector<Liv
         double relative = std::remainder(target_yaw - camera.angles.y, 360.0);
         double angle = (-relative - 90.0) * kPi / 180.0;
         double px = cx + radius * std::cos(angle), py = cy + radius * std::sin(angle);
-        double size = 12.0;
         cairo_new_path(cr);
         cairo_move_to(cr, px + size * std::cos(angle), py + size * std::sin(angle));
         cairo_line_to(cr, px + size * 0.7 * std::cos(angle + 2.4), py + size * 0.7 * std::sin(angle + 2.4));
         cairo_line_to(cr, px + size * 0.7 * std::cos(angle - 2.4), py + size * 0.7 * std::sin(angle - 2.4));
         cairo_close_path(cr);
-        Rgb health = HealthColor(player.info.hp / 100.f);
-        cairo_set_source_rgba(cr, health.r, health.g, health.b, 0.9);
+        cairo_set_source_rgba(cr, color.r, color.g, color.b, color_alpha);
         cairo_fill_preserve(cr);
         cairo_set_source_rgba(cr, 0, 0, 0, 0.9);
         cairo_set_line_width(cr, 1.2);

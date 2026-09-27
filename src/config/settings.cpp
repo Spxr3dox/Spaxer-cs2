@@ -25,10 +25,20 @@ const char* Path() {
     return s_path;
 }
 
-static constexpr uint32_t kMigrationLevel = 1;
+static constexpr uint32_t kMigrationLevel = 2;
+
+static void DefaultEspExtras(Settings& s) {
+    s.sound_esp_rgba = 0x00CCFFC0;
+    s.weapon_esp_rgba = 0x59D9FFF2;
+    s.weapon_esp_distance_m = 30;
+    s.arrows_rgba = 0xFF5252E6;
+    s.arrows_radius = 140;
+    s.arrows_size = 12;
+}
 
 static void Migrate(Settings& s) {
     if (s.migration_level < 1) s.render_lead_ms = 30;
+    if (s.migration_level < 2) DefaultEspExtras(s);
     s.migration_level = kMigrationLevel;
 }
 
@@ -135,6 +145,7 @@ void Defaults(Settings& s) {
     s.aimbot_switch_delay_ms = 150;
     DefaultChams(s);
     s.render_lead_ms = 30;
+    DefaultEspExtras(s);
     s.migration_level = kMigrationLevel;
 }
 

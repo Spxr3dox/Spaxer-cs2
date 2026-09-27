@@ -128,6 +128,14 @@ struct Settings {
     uint32_t chams_hide_model;
     int32_t  render_lead_ms;
     uint32_t migration_level;
+    uint32_t bind_sound_esp;
+    uint32_t sound_esp_rgba;
+    uint32_t bind_weapon_esp;
+    uint32_t weapon_esp_rgba;
+    int32_t  weapon_esp_distance_m;
+    uint32_t arrows_rgba;
+    int32_t  arrows_radius;
+    int32_t  arrows_size;
 };
 
 namespace settings {
