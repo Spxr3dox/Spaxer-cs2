@@ -168,6 +168,30 @@ bool Input::IsMouseDown(int button) const {
     return false;
 }
 
+bool Input::IsPhysicalKeyDown(int key_code) const {
+    if (key_code < 0 || key_code >= KEY_CNT) return false;
+    unsigned char keys[(KEY_CNT + 7) / 8] = {};
+    for (int i = 0; i < m_keyboard_count; i++) {
+        if (ioctl(m_keyboards[i], EVIOCGKEY(sizeof(keys)), keys) >= 0 &&
+            (keys[key_code / 8] & (1 << (key_code % 8))))
+            return true;
+    }
+    return false;
+}
+
+int Input::TakeMouseDX() {
+    int dx = 0;
+    input_event events[64];
+    for (int i = 0; i < m_mouse_count; i++) {
+        ssize_t n;
+        while ((n = read(m_mice[i], events, sizeof(events))) > 0) {
+            for (size_t e = 0; e < static_cast<size_t>(n) / sizeof(input_event); e++)
+                if (events[e].type == EV_REL && events[e].code == REL_X) dx += events[e].value;
+        }
+    }
+    return dx;
+}
+
 bool Input::IsKeyDown(int key_code) const {
     if (key_code < 0 || key_code >= KEY_CNT) return false;
     unsigned char keys[(KEY_CNT + 7) / 8] = {};

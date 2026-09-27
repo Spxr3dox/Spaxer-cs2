@@ -702,6 +702,7 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(c), MakeRow("Bunny hop",   &g_cfg->bunnyhop,    &g_cfg->bind_bunnyhop),    FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(c), MakeRow("Auto jump",   &g_cfg->bhop_auto_jump, nullptr),               FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(c), MakeRow("Auto strafe", &g_cfg->auto_strafe, &g_cfg->bind_auto_strafe), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(c), MakeComboRow("Strafe mode", &g_cfg->auto_strafe_mode, {"Follow mouse", "Full auto"}), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(box), c, FALSE, FALSE, 0);
         gtk_stack_add_named(GTK_STACK(g_stack), page, "movement");
         AddSidebarItemSvg(sidebar, s_svg_movement.c_str(), "movement", "Movement");

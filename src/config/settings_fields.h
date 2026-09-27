@@ -110,4 +110,5 @@
     X(aimbot_speed_min_x100, Number) \
     X(aimbot_speed_max_x100, Number) \
     X(aimbot_shake_x100, Number) \
-    X(aimbot_release_x100, Number)
+    X(aimbot_release_x100, Number) \
+    X(auto_strafe_mode, Number)

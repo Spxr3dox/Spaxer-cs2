@@ -142,6 +142,7 @@ struct Settings {
     int32_t  aimbot_shake_x100;
     int32_t  aimbot_release_x100;
     uint32_t lua_reload_token;
+    uint32_t auto_strafe_mode;
 };
 
 namespace settings {

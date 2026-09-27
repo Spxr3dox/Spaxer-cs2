@@ -7,6 +7,8 @@ public:
     void Shutdown();
     bool IsMouseDown(int button) const;
     bool IsKeyDown(int key_code) const;
+    bool IsPhysicalKeyDown(int key_code) const;
+    int TakeMouseDX();
     void HoldCrouch(bool down);
     void SnapTap();
     void SetAutoStrafe(int direction);

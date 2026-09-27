@@ -742,7 +742,7 @@ void Reset() {
 
 bool ReadyForGameplay() { return off::g_OffsetsReady.load() && off::g_EntityListPtr != 0; }
 
-std::vector<uintptr_t> FindButtonStateCandidates(const char* name) {
+std::vector<uintptr_t> FindButtonNameSlots(const char* name) {
     std::vector<uintptr_t> out;
     std::string needle(1, '\0');
     needle += name;
@@ -768,11 +768,17 @@ std::vector<uintptr_t> FindButtonStateCandidates(const char* name) {
             for (size_t off = 0; off + 8 <= len; off += 8) {
                 uintptr_t value;
                 memcpy(&value, data.data() + off, 8);
-                if (std::find(strings.begin(), strings.end(), value) == strings.end()) continue;
-                for (uintptr_t field = 0; field < 0x80; field += 4) out.push_back(at + off + field);
+                if (std::find(strings.begin(), strings.end(), value) != strings.end()) out.push_back(at + off);
             }
         }
     }
+    return out;
+}
+
+std::vector<uintptr_t> FindButtonStateCandidates(const char* name) {
+    std::vector<uintptr_t> out;
+    for (uintptr_t slot : FindButtonNameSlots(name))
+        for (uintptr_t field = 0; field < 0x80; field += 4) out.push_back(slot + field);
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
