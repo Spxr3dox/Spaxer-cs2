@@ -2,7 +2,7 @@
 
 Lua scripts can do pretty much anything the built-in features can: switch any feature on or off, change any setting, set up their own key binds, run timers, draw on the overlay, and read or write game memory.
 
-Scripts live in `~/.config/spaxer/scripts/` and load in alphabetical order when the overlay starts. The **Scripts** page in the settings window lists them. From there you can turn each one on or off (a disabled script is renamed to `name.lua.disabled`), open it in your editor, or hit **Reload scripts** to apply changes without restarting anything. The `scripts/` folder in this repo has examples you can copy over.
+Scripts live in `~/.config/spaxer/scripts/` and load in alphabetical order when the overlay starts. The **Scripts** page in the settings window lists them. From there you can turn each one on or off (a disabled script is renamed to `name.lua.disabled`), open it in your editor, or hit **Reload scripts** to apply changes without restarting anything.
 
 **Safety net.** Scripts run on LuaJIT with the JIT compiler switched off, which keeps them safely interruptible. Every call gets a **50 ms time budget**: a script that loops forever is stopped, not frozen. A callback that throws an error is logged and **disabled** so it can't spam the console every frame. A failing bind or timer is removed the same way. Output and errors go to the overlay's stderr, prefixed with `[LUA]`.
 

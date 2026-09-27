@@ -170,5 +170,4 @@ src/
   input/      evdev input, uinput keyboard, XTest mouse
 dump_inject/  LD_PRELOAD schema dumper
 tools/        chams model converter
-scripts/      example Lua scripts
 ```
