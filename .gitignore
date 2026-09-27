@@ -1,0 +1,12 @@
+build/
+spaxer
+spaxer-gui
+*.so
+*.o
+*.d
+__pycache__/
+third_party/
+AGENTS.md
+CLAUDE.md
+Altushka.md
+inject-pse.sh
