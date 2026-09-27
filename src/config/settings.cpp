@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "settings_fields.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
@@ -157,6 +158,19 @@ void Defaults(Settings& s) {
     DefaultEspExtras(s);
     DefaultHumanizer(s);
     s.migration_level = kMigrationLevel;
+}
+
+const std::vector<FieldInfo>& Fields() {
+#define SPAXER_FIELD_INFO(name, kind) FieldInfo{#name, FieldKind::kind, offsetof(Settings, name)},
+    static const std::vector<FieldInfo> fields = {SPAXER_SETTINGS_FIELDS(SPAXER_FIELD_INFO)};
+#undef SPAXER_FIELD_INFO
+    return fields;
+}
+
+const FieldInfo* FindField(const std::string& name) {
+    for (const FieldInfo& field : Fields())
+        if (name == field.name) return &field;
+    return nullptr;
 }
 
 Settings* Attach() {

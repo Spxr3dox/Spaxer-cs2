@@ -771,6 +771,7 @@ static gboolean Tick(gpointer) {
 }
 
 static gboolean OnFrameClock(GtkWidget* widget, GdkFrameClock*, gpointer) {
+    features::FrameLua();
     gtk_widget_queue_draw(widget);
     return G_SOURCE_CONTINUE;
 }
@@ -1588,6 +1589,7 @@ static void InstallCss() {
 }
 
 int main(int argc, char** argv) {
+    XInitThreads();
     std::signal(SIGINT,  PanicShutdown);
     std::signal(SIGTERM, PanicShutdown);
     std::signal(SIGSEGV, PanicShutdown);

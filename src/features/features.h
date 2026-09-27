@@ -28,4 +28,5 @@ namespace features {
     void ReloadLua();
     void PaintLua(cairo_t* cr, const render::Camera& camera);
     void TickLua();
+    void FrameLua();
 }

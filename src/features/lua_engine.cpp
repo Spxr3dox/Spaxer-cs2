@@ -6,6 +6,8 @@
 #include "sdk/offsets.h"
 #include "input/input.h"
 #include "render/camera.h"
+#include "sdk/game.h"
+#include <X11/Xlib.h>
 #include <lua.hpp>
 #include <vector>
 #include <string>
@@ -20,6 +22,7 @@ static lua_State* s_L = nullptr;
 static Settings* s_cfg = nullptr;
 static render::Camera s_camera;
 static bool s_reload_requested = false;
+static uint32_t s_seen_reload_token = 0;
 static std::chrono::steady_clock::time_point s_call_deadline;
 
 static constexpr auto kCallBudget = std::chrono::milliseconds(50);
@@ -89,7 +92,7 @@ static int LuaClientRegisterCallback(lua_State* L) {
 
 static int LuaClientLog(lua_State* L) {
     const char* msg = luaL_checkstring(L, 1);
-    printf("[LUA] %s\n", msg);
+    fprintf(stderr, "[LUA] %s\n", msg);
     return 0;
 }
 
@@ -457,54 +460,10 @@ static int LuaEntitiesGetDroppedItems(lua_State* L) {
     return 1;
 }
 
-static int LuaMemoryReadI32(lua_State* L) {
-    uintptr_t addr = static_cast<uintptr_t>(luaL_checknumber(L, 1));
-    lua_pushinteger(L, g_proc.Read<int32_t>(addr));
-    return 1;
-}
-
-static int LuaMemoryReadU32(lua_State* L) {
-    uintptr_t addr = static_cast<uintptr_t>(luaL_checknumber(L, 1));
-    lua_pushnumber(L, g_proc.Read<uint32_t>(addr));
-    return 1;
-}
-
-static int LuaMemoryReadI64(lua_State* L) {
-    uintptr_t addr = static_cast<uintptr_t>(luaL_checknumber(L, 1));
-    lua_pushnumber(L, static_cast<lua_Number>(g_proc.Read<int64_t>(addr)));
-    return 1;
-}
-
-static int LuaMemoryReadU64(lua_State* L) {
-    uintptr_t addr = static_cast<uintptr_t>(luaL_checknumber(L, 1));
-    lua_pushnumber(L, static_cast<lua_Number>(g_proc.Read<uint64_t>(addr)));
-    return 1;
-}
-
-static int LuaMemoryReadFloat(lua_State* L) {
-    uintptr_t addr = static_cast<uintptr_t>(luaL_checknumber(L, 1));
-    lua_pushnumber(L, g_proc.Read<float>(addr));
-    return 1;
-}
-
 static int LuaMemoryReadString(lua_State* L) {
     uintptr_t addr = static_cast<uintptr_t>(luaL_checknumber(L, 1));
     size_t len = static_cast<size_t>(luaL_optinteger(L, 2, 64));
     lua_pushstring(L, g_proc.ReadString(addr, len).c_str());
-    return 1;
-}
-
-static int LuaMemoryWriteI32(lua_State* L) {
-    uintptr_t addr = static_cast<uintptr_t>(luaL_checknumber(L, 1));
-    int32_t val = static_cast<int32_t>(luaL_checkinteger(L, 2));
-    lua_pushboolean(L, g_proc.Write<int32_t>(addr, val));
-    return 1;
-}
-
-static int LuaMemoryWriteFloat(lua_State* L) {
-    uintptr_t addr = static_cast<uintptr_t>(luaL_checknumber(L, 1));
-    float val = static_cast<float>(luaL_checknumber(L, 2));
-    lua_pushboolean(L, g_proc.Write<float>(addr, val));
     return 1;
 }
 
@@ -542,68 +501,398 @@ static int LuaInputClickLeft(lua_State*) {
     return 0;
 }
 
+struct ScaledAlias {
+    const char* name;
+    const char* field;
+    double scale;
+};
+
+static constexpr ScaledAlias kScaledAliases[] = {
+    {"aimbot_fov", "aimbot_fov_x100", 100.0},
+    {"aimbot_smooth", "aimbot_smooth_x100", 100.0},
+    {"rcs_strength", "rcs_strength_x100", 100.0},
+    {"trigger_fov", "trigger_fov_x100", 100.0},
+};
+
+static const ScaledAlias* FindAlias(const std::string& name) {
+    for (const ScaledAlias& alias : kScaledAliases)
+        if (name == alias.name) return &alias;
+    return nullptr;
+}
+
+static uint32_t* FieldPointer(const settings::FieldInfo& field) {
+    return reinterpret_cast<uint32_t*>(reinterpret_cast<char*>(s_cfg) + field.offset);
+}
+
+static const char* KindName(settings::FieldKind kind) {
+    switch (kind) {
+        case settings::FieldKind::Toggle: return "toggle";
+        case settings::FieldKind::Number: return "number";
+        case settings::FieldKind::Color: return "color";
+        case settings::FieldKind::Bind: return "bind";
+    }
+    return "unknown";
+}
+
+static const settings::FieldInfo& CheckField(lua_State* L, int index) {
+    const char* name = luaL_checkstring(L, index);
+    const settings::FieldInfo* field = settings::FindField(name);
+    if (!field) luaL_error(L, "unknown setting '%s'", name);
+    return *field;
+}
+
+static uint32_t ColorFromLua(lua_State* L, int index) {
+    if (lua_istable(L, index)) {
+        uint32_t channels[4] = {255, 255, 255, 255};
+        for (int i = 0; i < 4; i++) {
+            lua_rawgeti(L, index, i + 1);
+            if (lua_isnumber(L, -1)) channels[i] = static_cast<uint32_t>(std::clamp<lua_Number>(lua_tonumber(L, -1), 0, 255));
+            lua_pop(L, 1);
+        }
+        return (channels[0] << 24) | (channels[1] << 16) | (channels[2] << 8) | channels[3];
+    }
+    return static_cast<uint32_t>(luaL_checknumber(L, index));
+}
+
+static uint32_t BindFromLua(lua_State* L, int index) {
+    if (lua_isnoneornil(L, index)) return 0;
+    if (lua_isnumber(L, index)) return static_cast<uint32_t>(lua_tonumber(L, index));
+    const char* name = luaL_checkstring(L, index);
+    if (!*name) return 0;
+    KeySym keysym = XStringToKeysym(name);
+    if (keysym == NoSymbol) luaL_error(L, "unknown key name '%s' (use X11 names like F5, Insert, a)", name);
+    return static_cast<uint32_t>(keysym);
+}
+
 static int LuaConfigGet(lua_State* L) {
     if (!s_cfg) return 0;
-    std::string key = luaL_checkstring(L, 1);
-    if (key == "esp") lua_pushboolean(L, settings::Enabled(s_cfg->esp));
-    else if (key == "esp_box") lua_pushboolean(L, settings::Enabled(s_cfg->esp_box));
-    else if (key == "esp_health") lua_pushboolean(L, settings::Enabled(s_cfg->esp_health));
-    else if (key == "esp_name") lua_pushboolean(L, settings::Enabled(s_cfg->esp_name));
-    else if (key == "esp_weapon") lua_pushboolean(L, settings::Enabled(s_cfg->esp_weapon));
-    else if (key == "esp_skeleton") lua_pushboolean(L, settings::Enabled(s_cfg->esp_skeleton));
-    else if (key == "esp_head_circle") lua_pushboolean(L, settings::Enabled(s_cfg->esp_head_circle));
-    else if (key == "aimbot_enabled") lua_pushboolean(L, settings::Enabled(s_cfg->aimbot_enabled));
-    else if (key == "aimbot_fov") lua_pushnumber(L, s_cfg->aimbot_fov_x100 / 100.0);
-    else if (key == "aimbot_smooth") lua_pushnumber(L, s_cfg->aimbot_smooth_x100 / 100.0);
-    else if (key == "trigger_enabled") lua_pushboolean(L, settings::Enabled(s_cfg->trigger_enabled));
-    else if (key == "trigger_delay_ms") lua_pushinteger(L, s_cfg->trigger_delay_ms);
-    else if (key == "rcs_enabled") lua_pushboolean(L, settings::Enabled(s_cfg->rcs_enabled));
-    else if (key == "rcs_strength") lua_pushnumber(L, s_cfg->rcs_strength_x100 / 100.0);
-    else if (key == "bunnyhop") lua_pushboolean(L, settings::Enabled(s_cfg->bunnyhop));
-    else if (key == "auto_strafe") lua_pushboolean(L, settings::Enabled(s_cfg->auto_strafe));
-    else if (key == "snap_tap") lua_pushboolean(L, settings::Enabled(s_cfg->snap_tap));
-    else if (key == "watermark") lua_pushboolean(L, settings::Enabled(s_cfg->watermark));
-    else if (key == "bomb_timer") lua_pushboolean(L, settings::Enabled(s_cfg->bomb_timer));
-    else if (key == "crosshair") lua_pushboolean(L, settings::Enabled(s_cfg->crosshair));
-    else if (key == "chams") lua_pushboolean(L, settings::Enabled(s_cfg->chams));
-    else if (key == "glow") lua_pushboolean(L, settings::Enabled(s_cfg->glow));
-    else if (key == "sound_esp") lua_pushboolean(L, settings::Enabled(s_cfg->sound_esp));
-    else if (key == "hitmarker") lua_pushboolean(L, settings::Enabled(s_cfg->hitmarker));
-    else if (key == "radar_hack") lua_pushboolean(L, settings::Enabled(s_cfg->radar_hack));
-    else lua_pushnil(L);
+    std::string name = luaL_checkstring(L, 1);
+    if (const ScaledAlias* alias = FindAlias(name)) {
+        const settings::FieldInfo* field = settings::FindField(alias->field);
+        lua_pushnumber(L, static_cast<int32_t>(*FieldPointer(*field)) / alias->scale);
+        return 1;
+    }
+    const settings::FieldInfo& field = CheckField(L, 1);
+    uint32_t value = __atomic_load_n(FieldPointer(field), __ATOMIC_RELAXED);
+    switch (field.kind) {
+        case settings::FieldKind::Toggle: lua_pushboolean(L, value != 0); break;
+        case settings::FieldKind::Number: lua_pushnumber(L, static_cast<int32_t>(value)); break;
+        case settings::FieldKind::Color: lua_pushnumber(L, value); break;
+        case settings::FieldKind::Bind: {
+            const char* name_text = value ? XKeysymToString(static_cast<KeySym>(value)) : nullptr;
+            if (name_text) lua_pushstring(L, name_text);
+            else lua_pushnil(L);
+            break;
+        }
+    }
     return 1;
 }
 
 static int LuaConfigSet(lua_State* L) {
     if (!s_cfg) return 0;
-    std::string key = luaL_checkstring(L, 1);
-    if (key == "esp") settings::SetEnabled(s_cfg->esp, lua_toboolean(L, 2));
-    else if (key == "esp_box") settings::SetEnabled(s_cfg->esp_box, lua_toboolean(L, 2));
-    else if (key == "esp_health") settings::SetEnabled(s_cfg->esp_health, lua_toboolean(L, 2));
-    else if (key == "esp_name") settings::SetEnabled(s_cfg->esp_name, lua_toboolean(L, 2));
-    else if (key == "esp_weapon") settings::SetEnabled(s_cfg->esp_weapon, lua_toboolean(L, 2));
-    else if (key == "esp_skeleton") settings::SetEnabled(s_cfg->esp_skeleton, lua_toboolean(L, 2));
-    else if (key == "esp_head_circle") settings::SetEnabled(s_cfg->esp_head_circle, lua_toboolean(L, 2));
-    else if (key == "aimbot_enabled") settings::SetEnabled(s_cfg->aimbot_enabled, lua_toboolean(L, 2));
-    else if (key == "aimbot_fov") s_cfg->aimbot_fov_x100 = static_cast<int32_t>(luaL_checknumber(L, 2) * 100.0);
-    else if (key == "aimbot_smooth") s_cfg->aimbot_smooth_x100 = static_cast<int32_t>(luaL_checknumber(L, 2) * 100.0);
-    else if (key == "trigger_enabled") settings::SetEnabled(s_cfg->trigger_enabled, lua_toboolean(L, 2));
-    else if (key == "trigger_delay_ms") s_cfg->trigger_delay_ms = static_cast<int32_t>(luaL_checkinteger(L, 2));
-    else if (key == "rcs_enabled") settings::SetEnabled(s_cfg->rcs_enabled, lua_toboolean(L, 2));
-    else if (key == "rcs_strength") s_cfg->rcs_strength_x100 = static_cast<int32_t>(luaL_checknumber(L, 2) * 100.0);
-    else if (key == "bunnyhop") settings::SetEnabled(s_cfg->bunnyhop, lua_toboolean(L, 2));
-    else if (key == "auto_strafe") settings::SetEnabled(s_cfg->auto_strafe, lua_toboolean(L, 2));
-    else if (key == "snap_tap") settings::SetEnabled(s_cfg->snap_tap, lua_toboolean(L, 2));
-    else if (key == "watermark") settings::SetEnabled(s_cfg->watermark, lua_toboolean(L, 2));
-    else if (key == "bomb_timer") settings::SetEnabled(s_cfg->bomb_timer, lua_toboolean(L, 2));
-    else if (key == "crosshair") settings::SetEnabled(s_cfg->crosshair, lua_toboolean(L, 2));
-    else if (key == "chams") settings::SetEnabled(s_cfg->chams, lua_toboolean(L, 2));
-    else if (key == "glow") settings::SetEnabled(s_cfg->glow, lua_toboolean(L, 2));
-    else if (key == "sound_esp") settings::SetEnabled(s_cfg->sound_esp, lua_toboolean(L, 2));
-    else if (key == "hitmarker") settings::SetEnabled(s_cfg->hitmarker, lua_toboolean(L, 2));
-    else if (key == "radar_hack") settings::SetEnabled(s_cfg->radar_hack, lua_toboolean(L, 2));
+    std::string name = luaL_checkstring(L, 1);
+    if (const ScaledAlias* alias = FindAlias(name)) {
+        const settings::FieldInfo* field = settings::FindField(alias->field);
+        int32_t value = static_cast<int32_t>(std::lround(luaL_checknumber(L, 2) * alias->scale));
+        __atomic_store_n(FieldPointer(*field), static_cast<uint32_t>(value), __ATOMIC_RELAXED);
+        return 0;
+    }
+    const settings::FieldInfo& field = CheckField(L, 1);
+    uint32_t value = 0;
+    switch (field.kind) {
+        case settings::FieldKind::Toggle: value = lua_toboolean(L, 2) ? 1u : 0u; break;
+        case settings::FieldKind::Number: value = static_cast<uint32_t>(static_cast<int32_t>(std::lround(luaL_checknumber(L, 2)))); break;
+        case settings::FieldKind::Color: value = ColorFromLua(L, 2); break;
+        case settings::FieldKind::Bind: value = BindFromLua(L, 2); break;
+    }
+    __atomic_store_n(FieldPointer(field), value, __ATOMIC_RELAXED);
     return 0;
 }
+
+static int LuaConfigToggle(lua_State* L) {
+    if (!s_cfg) return 0;
+    const settings::FieldInfo& field = CheckField(L, 1);
+    if (field.kind != settings::FieldKind::Toggle) return luaL_error(L, "'%s' is not a toggle", field.name);
+    settings::ToggleEnabled(*FieldPointer(field));
+    lua_pushboolean(L, settings::Enabled(*FieldPointer(field)));
+    return 1;
+}
+
+static int LuaConfigList(lua_State* L) {
+    lua_newtable(L);
+    int index = 1;
+    for (const settings::FieldInfo& field : settings::Fields()) {
+        lua_newtable(L);
+        lua_pushstring(L, field.name);
+        lua_setfield(L, -2, "name");
+        lua_pushstring(L, KindName(field.kind));
+        lua_setfield(L, -2, "type");
+        lua_rawseti(L, -2, index++);
+    }
+    return 1;
+}
+
+static int LuaConfigSave(lua_State* L) {
+    lua_pushboolean(L, settings::SaveConfig(luaL_checkstring(L, 1)));
+    return 1;
+}
+
+static int LuaConfigLoad(lua_State* L) {
+    lua_pushboolean(L, settings::LoadConfig(luaL_checkstring(L, 1)));
+    return 1;
+}
+
+static int LuaConfigConfigs(lua_State* L) {
+    lua_newtable(L);
+    int index = 1;
+    for (const std::string& name : settings::ListConfigs()) {
+        lua_pushstring(L, name.c_str());
+        lua_rawseti(L, -2, index++);
+    }
+    return 1;
+}
+
+static uintptr_t CheckAddress(lua_State* L, int index) {
+    return static_cast<uintptr_t>(luaL_checknumber(L, index));
+}
+
+template <typename T>
+static int LuaReadNumber(lua_State* L) {
+    lua_pushnumber(L, static_cast<lua_Number>(g_proc.Read<T>(CheckAddress(L, 1))));
+    return 1;
+}
+
+template <typename T>
+static int LuaWriteNumber(lua_State* L) {
+    T value = static_cast<T>(luaL_checknumber(L, 2));
+    lua_pushboolean(L, g_proc.Write<T>(CheckAddress(L, 1), value));
+    return 1;
+}
+
+static int LuaMemoryReadBool(lua_State* L) {
+    lua_pushboolean(L, g_proc.Read<uint8_t>(CheckAddress(L, 1)) != 0);
+    return 1;
+}
+
+static int LuaMemoryWriteBool(lua_State* L) {
+    lua_pushboolean(L, g_proc.Write<uint8_t>(CheckAddress(L, 1), lua_toboolean(L, 2) ? 1 : 0));
+    return 1;
+}
+
+static void PushVec3(lua_State* L, const Vec3& v) {
+    lua_newtable(L);
+    lua_pushnumber(L, v.x); lua_setfield(L, -2, "x");
+    lua_pushnumber(L, v.y); lua_setfield(L, -2, "y");
+    lua_pushnumber(L, v.z); lua_setfield(L, -2, "z");
+}
+
+static int LuaMemoryReadVec3(lua_State* L) {
+    PushVec3(L, g_proc.Read<Vec3>(CheckAddress(L, 1)));
+    return 1;
+}
+
+static int LuaMemoryWriteVec3(lua_State* L) {
+    luaL_checktype(L, 2, LUA_TTABLE);
+    Vec3 v{};
+    lua_getfield(L, 2, "x"); v.x = static_cast<float>(luaL_optnumber(L, -1, 0)); lua_pop(L, 1);
+    lua_getfield(L, 2, "y"); v.y = static_cast<float>(luaL_optnumber(L, -1, 0)); lua_pop(L, 1);
+    lua_getfield(L, 2, "z"); v.z = static_cast<float>(luaL_optnumber(L, -1, 0)); lua_pop(L, 1);
+    lua_pushboolean(L, g_proc.Write<Vec3>(CheckAddress(L, 1), v));
+    return 1;
+}
+
+static int LuaOffsetsGet(lua_State* L) {
+    uintptr_t value = 0;
+    if (off::Get(luaL_checkstring(L, 1), value) && value) lua_pushnumber(L, static_cast<lua_Number>(value));
+    else lua_pushnil(L);
+    return 1;
+}
+
+static int LuaOffsetsList(lua_State* L) {
+    lua_newtable(L);
+    int index = 1;
+    for (const std::string& name : off::Names()) {
+        lua_pushstring(L, name.c_str());
+        lua_rawseti(L, -2, index++);
+    }
+    return 1;
+}
+
+static int LuaEntitiesGetLocal(lua_State* L) {
+    uintptr_t pawn = game::LocalPawn();
+    if (!pawn) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_newtable(L);
+    lua_pushnumber(L, static_cast<lua_Number>(pawn)); lua_setfield(L, -2, "pawn");
+    lua_pushnumber(L, static_cast<lua_Number>(game::LocalController())); lua_setfield(L, -2, "controller");
+    lua_pushinteger(L, g_proc.Read<int>(pawn + off::m_iHealth)); lua_setfield(L, -2, "hp");
+    lua_pushinteger(L, game::Team(pawn)); lua_setfield(L, -2, "team");
+    lua_pushinteger(L, game::ActiveWeaponDefinitionIndex(pawn)); lua_setfield(L, -2, "weapon_id");
+    lua_pushboolean(L, off::m_bIsScoped && g_proc.Read<bool>(pawn + off::m_bIsScoped)); lua_setfield(L, -2, "scoped");
+    uint32_t flags = off::m_fFlags ? g_proc.Read<uint32_t>(pawn + off::m_fFlags) : 0;
+    lua_pushboolean(L, (flags & 1u) != 0); lua_setfield(L, -2, "on_ground");
+    lua_pushboolean(L, (flags & 2u) != 0); lua_setfield(L, -2, "crouching");
+    PushVec3(L, game::Origin(pawn)); lua_setfield(L, -2, "origin");
+    PushVec3(L, game::EyePosition(pawn)); lua_setfield(L, -2, "eye");
+    PushVec3(L, off::m_angEyeAngles ? g_proc.Read<Vec3>(pawn + off::m_angEyeAngles) : Vec3{}); lua_setfield(L, -2, "angles");
+    PushVec3(L, off::m_vecVelocity ? g_proc.Read<Vec3>(pawn + off::m_vecVelocity) : Vec3{}); lua_setfield(L, -2, "velocity");
+    return 1;
+}
+
+static int LuaEntitiesGetEntity(lua_State* L) {
+    int index = static_cast<int>(luaL_checkinteger(L, 1));
+    uintptr_t entity = game::EntityFromList(game::EntityList(), index);
+    if (entity) lua_pushnumber(L, static_cast<lua_Number>(entity));
+    else lua_pushnil(L);
+    return 1;
+}
+
+static int LuaInputSetKey(lua_State* L) {
+    g_input.SetKey(static_cast<int>(luaL_checkinteger(L, 1)), lua_toboolean(L, 2));
+    return 0;
+}
+
+static int LuaInputPressKey(lua_State* L) {
+    int code = static_cast<int>(luaL_checkinteger(L, 1));
+    g_input.SetKey(code, true);
+    g_input.SetKey(code, false);
+    return 0;
+}
+
+static int LuaInputSetMouseButton(lua_State* L) {
+    g_input.SetMouseButton(static_cast<int>(luaL_checkinteger(L, 1)), lua_toboolean(L, 2));
+    return 0;
+}
+
+static int LuaInputClick(lua_State* L) {
+    int button = static_cast<int>(luaL_optinteger(L, 1, 1));
+    g_input.SetMouseButton(button, true);
+    g_input.SetMouseButton(button, false);
+    return 0;
+}
+
+static int LuaClientScriptDir(lua_State* L) {
+    lua_pushstring(L, ScriptsDir().c_str());
+    return 1;
+}
+
+struct KeyName {
+    const char* name;
+    int code;
+};
+
+static constexpr KeyName kKeyNames[] = {
+#include "features/lua_keys.inc"
+};
+
+static void RegisterKeys(lua_State* L) {
+    lua_newtable(L);
+    for (const KeyName& key : kKeyNames) {
+        lua_pushinteger(L, key.code);
+        lua_setfield(L, -2, key.name);
+    }
+    lua_setglobal(L, "keys");
+}
+
+static const char* kPrelude = R"lua(
+local timers, binds, next_id = {}, {}, 0
+
+local function new_id()
+    next_id = next_id + 1
+    return next_id
+end
+
+local function schedule(seconds, fn, interval)
+    assert(type(fn) == "function", "callback must be a function")
+    local id = new_id()
+    timers[id] = { at = client.get_time() + seconds, fn = fn, interval = interval }
+    return id
+end
+
+function client.delay(seconds, fn) return schedule(seconds, fn, nil) end
+function client.every(seconds, fn) return schedule(seconds, fn, math.max(seconds, 0.001)) end
+function client.cancel(id) timers[id] = nil end
+
+local function resolve_key(key)
+    if type(key) == "number" then return "key", key end
+    assert(type(key) == "string", "key must be a name or a code")
+    local upper = key:upper()
+    local mouse = upper:match("^MOUSE(%d)$")
+    if mouse then return "mouse", tonumber(mouse) end
+    local code = keys[upper]
+    assert(code, "unknown key '" .. key .. "'")
+    return "key", code
+end
+
+local function is_down(bind)
+    if bind.kind == "mouse" then return input.is_mouse_down(bind.code) end
+    return input.is_key_down(bind.code)
+end
+
+function input.bind(key, fn, mode, global)
+    assert(type(fn) == "function", "callback must be a function")
+    mode = mode or "press"
+    assert(mode == "press" or mode == "release" or mode == "hold" or mode == "toggle", "mode must be press, release, hold or toggle")
+    local kind, code = resolve_key(key)
+    local id = new_id()
+    binds[id] = { kind = kind, code = code, fn = fn, mode = mode, global = global == true, down = false, state = false }
+    return id
+end
+
+function input.unbind(id) binds[id] = nil end
+
+function input.is_pressed(key)
+    local kind, code = resolve_key(key)
+    return is_down({ kind = kind, code = code })
+end
+
+local function run(fn, what, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok then client.log(what .. " error: " .. tostring(err)) end
+    return ok
+end
+
+client.register_callback("frame", function()
+    local now = client.get_time()
+    local due = {}
+    for id, timer in pairs(timers) do
+        if now >= timer.at then due[#due + 1] = id end
+    end
+    for _, id in ipairs(due) do
+        local timer = timers[id]
+        if timer then
+            if timer.interval then timer.at = now + timer.interval else timers[id] = nil end
+            if not run(timer.fn, "timer") then timers[id] = nil end
+        end
+    end
+
+    local focused = engine.is_focused()
+    local fired = {}
+    for id, bind in pairs(binds) do
+        local down = (bind.global or focused) and is_down(bind)
+        if down ~= bind.down then
+            bind.down = down
+            fired[#fired + 1] = { id = id, down = down }
+        end
+    end
+    for _, event in ipairs(fired) do
+        local bind = binds[event.id]
+        if bind then
+            local ok = true
+            if bind.mode == "press" and event.down then ok = run(bind.fn, "bind")
+            elseif bind.mode == "release" and not event.down then ok = run(bind.fn, "bind")
+            elseif bind.mode == "hold" then ok = run(bind.fn, "bind", event.down)
+            elseif bind.mode == "toggle" and event.down then
+                bind.state = not bind.state
+                ok = run(bind.fn, "bind", bind.state)
+            end
+            if not ok then binds[event.id] = nil end
+        end
+    end
+end)
+)lua";
 
 static void LoadScriptsFromDir(const std::string& dir) {
     std::error_code error;
@@ -618,6 +907,7 @@ namespace lua_engine {
 
 void Init(Settings* cfg) {
     s_cfg = cfg;
+    if (cfg) s_seen_reload_token = __atomic_load_n(&cfg->lua_reload_token, __ATOMIC_RELAXED);
     if (s_L) Shutdown();
     s_L = luaL_newstate();
     if (!s_L) return;
@@ -634,6 +924,7 @@ void Init(Settings* cfg) {
     lua_pushcfunction(s_L, LuaClientLoadScript);       lua_setfield(s_L, -2, "load_script");
     lua_pushcfunction(s_L, LuaClientReload);           lua_setfield(s_L, -2, "reload");
     lua_pushcfunction(s_L, LuaClientGetTime);          lua_setfield(s_L, -2, "get_time");
+    lua_pushcfunction(s_L, LuaClientScriptDir);        lua_setfield(s_L, -2, "script_dir");
     lua_setglobal(s_L, "client");
 
     lua_newtable(s_L);
@@ -664,17 +955,28 @@ void Init(Settings* cfg) {
     lua_pushcfunction(s_L, LuaEntitiesGetBomb);         lua_setfield(s_L, -2, "get_bomb");
     lua_pushcfunction(s_L, LuaEntitiesGetSpectators);   lua_setfield(s_L, -2, "get_spectators");
     lua_pushcfunction(s_L, LuaEntitiesGetDroppedItems); lua_setfield(s_L, -2, "get_dropped_items");
+    lua_pushcfunction(s_L, LuaEntitiesGetLocal);        lua_setfield(s_L, -2, "get_local");
+    lua_pushcfunction(s_L, LuaEntitiesGetEntity);       lua_setfield(s_L, -2, "get_entity");
     lua_setglobal(s_L, "entities");
 
     lua_newtable(s_L);
-    lua_pushcfunction(s_L, LuaMemoryReadI32);          lua_setfield(s_L, -2, "read_i32");
-    lua_pushcfunction(s_L, LuaMemoryReadU32);          lua_setfield(s_L, -2, "read_u32");
-    lua_pushcfunction(s_L, LuaMemoryReadI64);          lua_setfield(s_L, -2, "read_i64");
-    lua_pushcfunction(s_L, LuaMemoryReadU64);          lua_setfield(s_L, -2, "read_u64");
-    lua_pushcfunction(s_L, LuaMemoryReadFloat);        lua_setfield(s_L, -2, "read_float");
+    lua_pushcfunction(s_L, LuaReadNumber<uint8_t>);    lua_setfield(s_L, -2, "read_u8");
+    lua_pushcfunction(s_L, LuaReadNumber<int32_t>);    lua_setfield(s_L, -2, "read_i32");
+    lua_pushcfunction(s_L, LuaReadNumber<uint32_t>);   lua_setfield(s_L, -2, "read_u32");
+    lua_pushcfunction(s_L, LuaReadNumber<int64_t>);    lua_setfield(s_L, -2, "read_i64");
+    lua_pushcfunction(s_L, LuaReadNumber<uint64_t>);   lua_setfield(s_L, -2, "read_u64");
+    lua_pushcfunction(s_L, LuaReadNumber<uint64_t>);   lua_setfield(s_L, -2, "read_ptr");
+    lua_pushcfunction(s_L, LuaReadNumber<float>);      lua_setfield(s_L, -2, "read_float");
+    lua_pushcfunction(s_L, LuaMemoryReadBool);         lua_setfield(s_L, -2, "read_bool");
+    lua_pushcfunction(s_L, LuaMemoryReadVec3);         lua_setfield(s_L, -2, "read_vec3");
     lua_pushcfunction(s_L, LuaMemoryReadString);       lua_setfield(s_L, -2, "read_string");
-    lua_pushcfunction(s_L, LuaMemoryWriteI32);         lua_setfield(s_L, -2, "write_i32");
-    lua_pushcfunction(s_L, LuaMemoryWriteFloat);       lua_setfield(s_L, -2, "write_float");
+    lua_pushcfunction(s_L, LuaWriteNumber<uint8_t>);   lua_setfield(s_L, -2, "write_u8");
+    lua_pushcfunction(s_L, LuaWriteNumber<int32_t>);   lua_setfield(s_L, -2, "write_i32");
+    lua_pushcfunction(s_L, LuaWriteNumber<uint32_t>);  lua_setfield(s_L, -2, "write_u32");
+    lua_pushcfunction(s_L, LuaWriteNumber<uint64_t>);  lua_setfield(s_L, -2, "write_u64");
+    lua_pushcfunction(s_L, LuaWriteNumber<float>);     lua_setfield(s_L, -2, "write_float");
+    lua_pushcfunction(s_L, LuaMemoryWriteBool);        lua_setfield(s_L, -2, "write_bool");
+    lua_pushcfunction(s_L, LuaMemoryWriteVec3);        lua_setfield(s_L, -2, "write_vec3");
     lua_pushcfunction(s_L, LuaMemoryGetClientBase);    lua_setfield(s_L, -2, "get_client_base");
     lua_pushcfunction(s_L, LuaMemoryGetEngineBase);    lua_setfield(s_L, -2, "get_engine_base");
     lua_setglobal(s_L, "memory");
@@ -684,12 +986,34 @@ void Init(Settings* cfg) {
     lua_pushcfunction(s_L, LuaInputIsMouseDown);       lua_setfield(s_L, -2, "is_mouse_down");
     lua_pushcfunction(s_L, LuaInputMouseMove);         lua_setfield(s_L, -2, "mouse_move");
     lua_pushcfunction(s_L, LuaInputClickLeft);         lua_setfield(s_L, -2, "click_left");
+    lua_pushcfunction(s_L, LuaInputSetKey);            lua_setfield(s_L, -2, "set_key");
+    lua_pushcfunction(s_L, LuaInputPressKey);          lua_setfield(s_L, -2, "press_key");
+    lua_pushcfunction(s_L, LuaInputSetMouseButton);    lua_setfield(s_L, -2, "set_mouse_button");
+    lua_pushcfunction(s_L, LuaInputClick);             lua_setfield(s_L, -2, "click");
     lua_setglobal(s_L, "input");
 
     lua_newtable(s_L);
     lua_pushcfunction(s_L, LuaConfigGet);              lua_setfield(s_L, -2, "get");
     lua_pushcfunction(s_L, LuaConfigSet);              lua_setfield(s_L, -2, "set");
+    lua_pushcfunction(s_L, LuaConfigToggle);           lua_setfield(s_L, -2, "toggle");
+    lua_pushcfunction(s_L, LuaConfigList);             lua_setfield(s_L, -2, "list");
+    lua_pushcfunction(s_L, LuaConfigSave);             lua_setfield(s_L, -2, "save");
+    lua_pushcfunction(s_L, LuaConfigLoad);             lua_setfield(s_L, -2, "load");
+    lua_pushcfunction(s_L, LuaConfigConfigs);          lua_setfield(s_L, -2, "configs");
     lua_setglobal(s_L, "config");
+
+    lua_newtable(s_L);
+    lua_pushcfunction(s_L, LuaOffsetsGet);             lua_setfield(s_L, -2, "get");
+    lua_pushcfunction(s_L, LuaOffsetsList);            lua_setfield(s_L, -2, "list");
+    lua_setglobal(s_L, "offsets");
+
+    RegisterKeys(s_L);
+    if (luaL_loadstring(s_L, kPrelude) != 0) {
+        fprintf(stderr, "[LUA] prelude: %s\n", lua_tostring(s_L, -1));
+        lua_pop(s_L, 1);
+    } else {
+        ProtectedCall(s_L, 0, "prelude");
+    }
 
     std::error_code error;
     std::filesystem::create_directories(ScriptsDir(), error);
@@ -724,6 +1048,19 @@ void DispatchPaint(cairo_t* cr, const render::Camera& camera) {
     s_current_cr = nullptr;
 }
 
+void DispatchFrame() {
+    if (s_cfg) {
+        uint32_t token = __atomic_load_n(&s_cfg->lua_reload_token, __ATOMIC_RELAXED);
+        if (token != s_seen_reload_token) {
+            s_seen_reload_token = token;
+            s_reload_requested = true;
+        }
+    }
+    ApplyPendingReload();
+    if (!s_L) return;
+    DispatchEvent("frame");
+}
+
 void DispatchTick() {
     ApplyPendingReload();
     if (!s_L) return;
@@ -752,6 +1089,10 @@ void PaintLua(cairo_t* cr, const render::Camera& camera) {
 
 void TickLua() {
     lua_engine::DispatchTick();
+}
+
+void FrameLua() {
+    lua_engine::DispatchFrame();
 }
 
 }

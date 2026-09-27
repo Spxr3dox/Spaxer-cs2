@@ -10,4 +10,5 @@ namespace lua_engine {
     void Reload();
     void DispatchPaint(cairo_t* cr, const render::Camera& camera);
     void DispatchTick();
+    void DispatchFrame();
 }

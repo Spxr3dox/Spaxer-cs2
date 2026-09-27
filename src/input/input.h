@@ -13,6 +13,8 @@ public:
     void ClickLeft();
     void MouseMove(int dx, int dy);
     void HoldShift(bool down);
+    void SetKey(int key_code, bool down);
+    void SetMouseButton(int button, bool down);
 
 private:
     void* m_display = nullptr;

@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <atomic>
 #include <string>
+#include <vector>
 
 namespace off {
     inline uintptr_t g_ClientBase = 0;
@@ -85,4 +86,6 @@ namespace off {
     bool LoadConfiguredJson();
     bool LoadFromJson(const std::string& path);
     bool LoadFromPseFile();
+    bool Get(const std::string& key, uintptr_t& out);
+    std::vector<std::string> Names();
 }

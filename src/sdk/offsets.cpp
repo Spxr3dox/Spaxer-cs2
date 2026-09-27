@@ -37,67 +37,100 @@ static bool ParseHex(const char* s, uintptr_t& out) {
     return true;
 }
 
+struct OffsetEntry {
+    const char* name;
+    uintptr_t* value;
+};
+
+static const OffsetEntry kOffsetTable[] = {
+    {"dwViewMatrix", &dwViewMatrix},
+    {"dwWindowWidth", &dwWindowWidth},
+    {"dwWindowHeight", &dwWindowHeight},
+    {"g_EntityListPtr", &g_EntityListPtr},
+    {"m_iHealth", &m_iHealth},
+    {"m_iTeamNum", &m_iTeamNum},
+    {"m_hPlayerPawn", &m_hPlayerPawn},
+    {"m_iIDEntIndex", &m_iIDEntIndex},
+    {"m_iPing", &m_iPing},
+    {"m_iszPlayerName", &m_iszPlayerName},
+    {"m_lifeState", &m_lifeState},
+    {"m_fFlags", &m_fFlags},
+    {"m_pGameSceneNode", &m_pGameSceneNode},
+    {"m_modelState", &m_modelState},
+    {"m_pWeaponServices", &m_pWeaponServices},
+    {"m_hActiveWeapon", &m_hActiveWeapon},
+    {"m_AttributeManager", &m_AttributeManager},
+    {"m_Item", &m_Item},
+    {"m_iItemDefinitionIndex", &m_iItemDefinitionIndex},
+    {"m_bIsLocalPlayerController", &m_bIsLocalPlayerController},
+    {"m_vecAbsOrigin", &m_vecAbsOrigin},
+    {"m_angEyeAngles", &m_angEyeAngles},
+    {"m_aimPunchAngle", &m_aimPunchAngle},
+    {"m_aimPunchCache", &m_aimPunchCache},
+    {"m_iShotsFired", &m_iShotsFired},
+    {"m_bIsScoped", &m_bIsScoped},
+    {"m_iClip1", &m_iClip1},
+    {"m_pCameraServices", &m_pCameraServices},
+    {"m_iFOV", &m_iFOV},
+    {"m_bIsThirdPersonView", &m_bIsThirdPersonView},
+    {"m_flFlashMaxAlpha", &m_flFlashMaxAlpha},
+    {"m_flFlashDuration", &m_flFlashDuration},
+    {"m_vecVelocity", &m_vecVelocity},
+    {"m_bDidSmokeEffect", &m_bDidSmokeEffect},
+    {"m_vSmokeColor", &m_vSmokeColor},
+    {"m_Glow", &m_Glow},
+    {"m_clrRender", &m_clrRender},
+    {"m_nRenderMode", &m_nRenderMode},
+    {"m_fEffects", &m_fEffects},
+    {"m_hOwnerEntity", &m_hOwnerEntity},
+    {"m_bDormant", &m_bDormant},
+    {"m_iGlowType", &m_iGlowType},
+    {"m_glowColorOverride", &m_glowColorOverride},
+    {"m_bGlowing", &m_bGlowing},
+    {"m_entitySpottedState", &m_entitySpottedState},
+    {"m_bSpotted", &m_bSpotted},
+    {"m_bSpottedByMask", &m_bSpottedByMask},
+    {"m_pReserveAmmo", &m_pReserveAmmo},
+    {"m_pObserverServices", &m_pObserverServices},
+    {"m_hObserverTarget", &m_hObserverTarget},
+    {"m_iObserverMode", &m_iObserverMode},
+    {"m_bBombTicking", &m_bBombTicking},
+    {"m_bBombDefused", &m_bBombDefused},
+    {"m_bBeingDefused", &m_bBeingDefused},
+    {"m_nBombSite", &m_nBombSite},
+    {"m_flTimerLength", &m_flTimerLength},
+    {"m_flDefuseLength", &m_flDefuseLength},
+    {"m_flC4Blow", &m_flC4Blow},
+    {"m_flDefuseCountDown", &m_flDefuseCountDown},
+};
+
 static void AssignKey(const std::string& key, uintptr_t value) {
-    if      (key == "dwViewMatrix")             dwViewMatrix = value;
-    else if (key == "dwWindowWidth")            dwWindowWidth = value;
-    else if (key == "dwWindowHeight")           dwWindowHeight = value;
-    else if (key == "g_EntityListPtr")          g_EntityListPtr = value;
-    else if (key == "LocalControllerIdx")       g_LocalControllerIdx = (int)value;
-    else if (key == "m_iHealth")                m_iHealth = value;
-    else if (key == "m_iTeamNum")               m_iTeamNum = value;
-    else if (key == "m_hPlayerPawn")            m_hPlayerPawn = value;
-    else if (key == "m_iIDEntIndex")            m_iIDEntIndex = value;
-    else if (key == "m_iPing")                  m_iPing = value;
-    else if (key == "m_iszPlayerName")          m_iszPlayerName = value;
-    else if (key == "m_lifeState")              m_lifeState = value;
-    else if (key == "m_fFlags")                 m_fFlags = value;
-    else if (key == "m_pGameSceneNode")         m_pGameSceneNode = value;
-    else if (key == "m_modelState")             m_modelState = value;
-    else if (key == "m_pWeaponServices")        m_pWeaponServices = value;
-    else if (key == "m_hActiveWeapon")          m_hActiveWeapon = value;
-    else if (key == "m_AttributeManager")       m_AttributeManager = value;
-    else if (key == "m_Item")                    m_Item = value;
-    else if (key == "m_iItemDefinitionIndex")   m_iItemDefinitionIndex = value;
-    else if (key == "m_bIsLocalPlayerController") m_bIsLocalPlayerController = value;
-    else if (key == "m_vecAbsOrigin")           m_vecAbsOrigin = value;
-    else if (key == "m_angEyeAngles")           m_angEyeAngles = value;
-    else if (key == "m_aimPunchAngle")          m_aimPunchAngle = value;
-    else if (key == "m_aimPunchCache")          m_aimPunchCache = value;
-    else if (key == "m_iShotsFired")            m_iShotsFired = value;
-    else if (key == "m_bIsScoped")              m_bIsScoped = value;
-    else if (key == "m_iClip1")                 m_iClip1 = value;
-    else if (key == "m_pCameraServices")        m_pCameraServices = value;
-    else if (key == "m_iFOV")                   m_iFOV = value;
-    else if (key == "m_bIsThirdPersonView")     m_bIsThirdPersonView = value;
-    else if (key == "m_flFlashMaxAlpha")        m_flFlashMaxAlpha = value;
-    else if (key == "m_flFlashDuration")        m_flFlashDuration = value;
-    else if (key == "m_vecVelocity")            m_vecVelocity = value;
-    else if (key == "m_bDidSmokeEffect")        m_bDidSmokeEffect = value;
-    else if (key == "m_vSmokeColor")            m_vSmokeColor = value;
-    else if (key == "m_Glow")                   m_Glow = value;
-    else if (key == "m_clrRender")              m_clrRender = value;
-    else if (key == "m_nRenderMode")            m_nRenderMode = value;
-    else if (key == "m_fEffects")               m_fEffects = value;
-    else if (key == "m_hOwnerEntity")           m_hOwnerEntity = value;
-    else if (key == "m_bDormant")               m_bDormant = value;
-    else if (key == "m_iGlowType")              m_iGlowType = value;
-    else if (key == "m_glowColorOverride")      m_glowColorOverride = value;
-    else if (key == "m_bGlowing")               m_bGlowing = value;
-    else if (key == "m_entitySpottedState")     m_entitySpottedState = value;
-    else if (key == "m_bSpotted")               m_bSpotted = value;
-    else if (key == "m_bSpottedByMask")         m_bSpottedByMask = value;
-    else if (key == "m_pReserveAmmo")           m_pReserveAmmo = value;
-    else if (key == "m_pObserverServices")      m_pObserverServices = value;
-    else if (key == "m_hObserverTarget")        m_hObserverTarget = value;
-    else if (key == "m_iObserverMode")          m_iObserverMode = value;
-    else if (key == "m_bBombTicking")           m_bBombTicking = value;
-    else if (key == "m_bBombDefused")           m_bBombDefused = value;
-    else if (key == "m_bBeingDefused")          m_bBeingDefused = value;
-    else if (key == "m_nBombSite")              m_nBombSite = value;
-    else if (key == "m_flTimerLength")          m_flTimerLength = value;
-    else if (key == "m_flDefuseLength")         m_flDefuseLength = value;
-    else if (key == "m_flC4Blow")               m_flC4Blow = value;
-    else if (key == "m_flDefuseCountDown")      m_flDefuseCountDown = value;
+    if (key == "LocalControllerIdx") {
+        g_LocalControllerIdx = static_cast<int>(value);
+        return;
+    }
+    for (const OffsetEntry& entry : kOffsetTable) {
+        if (key == entry.name) {
+            *entry.value = value;
+            return;
+        }
+    }
+}
+
+bool Get(const std::string& key, uintptr_t& out) {
+    for (const OffsetEntry& entry : kOffsetTable) {
+        if (key == entry.name) {
+            out = *entry.value;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<std::string> Names() {
+    std::vector<std::string> names;
+    for (const OffsetEntry& entry : kOffsetTable) names.emplace_back(entry.name);
+    return names;
 }
 
 bool LoadFromJson(const std::string& path) {

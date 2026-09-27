@@ -141,6 +141,7 @@ struct Settings {
     int32_t  aimbot_speed_max_x100;
     int32_t  aimbot_shake_x100;
     int32_t  aimbot_release_x100;
+    uint32_t lua_reload_token;
 };
 
 namespace settings {
@@ -162,6 +163,17 @@ namespace settings {
         WeaponSettings& weapon = settings.weapon_settings[definition];
         return Enabled(weapon.enabled) ? &weapon : nullptr;
     }
+
+    enum class FieldKind { Toggle, Number, Color, Bind };
+
+    struct FieldInfo {
+        const char* name;
+        FieldKind kind;
+        size_t offset;
+    };
+
+    const std::vector<FieldInfo>& Fields();
+    const FieldInfo* FindField(const std::string& name);
 
     Settings* Attach();
     void Defaults(Settings& s);

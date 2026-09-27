@@ -354,3 +354,16 @@ void Input::ClickLeft() {
         EmitBtn(BTN_LEFT, 0);
     }
 }
+
+void Input::SetKey(int key_code, bool down) {
+    if (key_code <= 0 || key_code >= KEY_CNT) return;
+    EmitKey(key_code, down ? 1 : 0);
+}
+
+void Input::SetMouseButton(int button, bool down) {
+    static constexpr unsigned int kXButtons[] = {0, 1, 2, 3, 8, 9};
+    if (button < 1 || button > 5 || !m_display) return;
+    Display* d = static_cast<Display*>(m_display);
+    XTestFakeButtonEvent(d, kXButtons[button], down ? True : False, CurrentTime);
+    XFlush(d);
+}

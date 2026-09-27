@@ -202,11 +202,21 @@ static GtkWidget* PageBox(GtkWidget* page) {
     return GTK_WIDGET(g_object_get_data(G_OBJECT(page), "content"));
 }
 
-static void AddSidebarItem(GtkWidget* sidebar, const char* icon, const char* name, const char* label) {
+static GtkWidget* MakeSvgWidget(const char* svg_data, int size = 16) {
+    GInputStream* stream = g_memory_input_stream_new_from_data(svg_data, -1, nullptr);
+    GdkPixbuf* pb = gdk_pixbuf_new_from_stream_at_scale(stream, size, size, TRUE, nullptr, nullptr);
+    g_object_unref(stream);
+    if (!pb) return gtk_label_new("</>");
+    GtkWidget* img = gtk_image_new_from_pixbuf(pb);
+    g_object_unref(pb);
+    return img;
+}
+
+static void AddSidebarItemSvg(GtkWidget* sidebar, const char* svg_data, const char* name, const char* label) {
     GtkWidget* btn = gtk_button_new();
     gtk_style_context_add_class(gtk_widget_get_style_context(btn), "sidebar-item");
     GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget* ic = gtk_label_new(icon);
+    GtkWidget* ic = MakeSvgWidget(svg_data, 22);
     gtk_style_context_add_class(gtk_widget_get_style_context(ic), "sidebar-icon");
     GtkWidget* lbl = gtk_label_new(label);
     gtk_label_set_xalign(GTK_LABEL(lbl), 0.f);
@@ -380,10 +390,10 @@ static void InstallCss() {
         ".traffic.hide:hover   { background: #4dd865; }"
 
         "#sidebar { background: rgba(20, 20, 22, 0.35); border-right: 1px solid rgba(255,255,255,0.06); padding: 12px 8px; }"
-        ".sidebar-item { background: transparent; color: #c8c8ce; border: none; border-radius: 8px; padding: 8px 12px; margin: 2px 4px; box-shadow: none; }"
+        ".sidebar-item { background: transparent; color: #e5e5ea; border: none; border-radius: 8px; padding: 7px 10px; margin: 2px 4px; box-shadow: none; font-size: 14px; font-weight: 500; }"
         ".sidebar-item:hover { background: rgba(255,255,255,0.06); }"
         ".sidebar-item:active { background: rgba(255,255,255,0.14); color: #ffffff; }"
-        ".sidebar-icon { color: #a0a0a6; font-size: 15px; min-width: 18px; }"
+        ".sidebar-icon { min-width: 22px; }"
 
         ".configs { padding: 8px 10px; margin: 8px 4px; background: rgba(255,255,255,0.04); border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); }"
         ".configs-title { color: #8e8e93; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin-bottom: 2px; }"
@@ -460,47 +470,130 @@ static GtkWidget* Titlebar() {
     return bar;
 }
 
+static std::string ColoredIconSvg(const char* color, const char* glyph) {
+    return std::string("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">"
+                       "<defs><linearGradient id=\"g\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">"
+                       "<stop offset=\"0\" stop-color=\"#ffffff\" stop-opacity=\"0.28\"/>"
+                       "<stop offset=\"1\" stop-color=\"#000000\" stop-opacity=\"0.12\"/></linearGradient></defs>"
+                       "<rect width=\"24\" height=\"24\" rx=\"6\" fill=\"") + color + "\"/>"
+           "<rect width=\"24\" height=\"24\" rx=\"6\" fill=\"url(#g)\"/>"
+           "<g transform=\"translate(5 5) scale(0.5833)\" fill=\"none\" stroke=\"#ffffff\" stroke-width=\"2.4\" "
+           "stroke-linecap=\"round\" stroke-linejoin=\"round\">" + glyph + "</g></svg>";
+}
+
+static const char* kGlyphCrosshair = "<circle cx=\"12\" cy=\"12\" r=\"7\"/><line x1=\"12\" y1=\"1\" x2=\"12\" y2=\"6\"/><line x1=\"12\" y1=\"18\" x2=\"12\" y2=\"23\"/><line x1=\"1\" y1=\"12\" x2=\"6\" y2=\"12\"/><line x1=\"18\" y1=\"12\" x2=\"23\" y2=\"12\"/><circle cx=\"12\" cy=\"12\" r=\"1\" fill=\"#ffffff\"/>";
+static const char* kGlyphMovement = "<polyline points=\"3 17 9 11 13 15 21 7\"/><polyline points=\"15 7 21 7 21 13\"/>";
+static const char* kGlyphRender = "<path d=\"M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/>";
+static const char* kGlyphMisc = "<line x1=\"4\" y1=\"21\" x2=\"4\" y2=\"14\"/><line x1=\"4\" y1=\"10\" x2=\"4\" y2=\"3\"/><line x1=\"12\" y1=\"21\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"3\"/><line x1=\"20\" y1=\"21\" x2=\"20\" y2=\"16\"/><line x1=\"20\" y1=\"12\" x2=\"20\" y2=\"3\"/><line x1=\"1\" y1=\"14\" x2=\"7\" y2=\"14\"/><line x1=\"9\" y1=\"8\" x2=\"15\" y2=\"8\"/><line x1=\"17\" y1=\"16\" x2=\"23\" y2=\"16\"/>";
+static const char* kGlyphScripts = "<polyline points=\"16 18 22 12 16 6\"/><polyline points=\"8 6 2 12 8 18\"/><line x1=\"14\" y1=\"4\" x2=\"10\" y2=\"20\"/>";
+static const char* kGlyphFile = "<path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"/><polyline points=\"14 2 14 8 20 8\"/><line x1=\"8\" y1=\"13\" x2=\"16\" y2=\"13\"/><line x1=\"8\" y1=\"17\" x2=\"13\" y2=\"17\"/>";
+
+static const std::string s_svg_legit = ColoredIconSvg("#ff453a", kGlyphCrosshair);
+static const std::string s_svg_movement = ColoredIconSvg("#30d158", kGlyphMovement);
+static const std::string s_svg_render = ColoredIconSvg("#bf5af2", kGlyphRender);
+static const std::string s_svg_misc = ColoredIconSvg("#ff9f0a", kGlyphMisc);
+static const std::string s_svg_scripts = ColoredIconSvg("#0a84ff", kGlyphScripts);
+static const std::string s_svg_lua_file = ColoredIconSvg("#5e5ce6", kGlyphFile);
+
+static std::string ScriptsDir() {
+    const char* home = getenv("HOME");
+    return std::string(home ? home : "/tmp") + "/.config/spaxer/scripts";
+}
+
+static void OpenPath(const std::string& path) {
+    gchar* uri = g_filename_to_uri(path.c_str(), nullptr, nullptr);
+    if (!uri) return;
+    g_app_info_launch_default_for_uri(uri, nullptr, nullptr);
+    g_free(uri);
+}
+
+static void RequestScriptReload() {
+    __atomic_fetch_add(&g_cfg->lua_reload_token, 1u, __ATOMIC_RELAXED);
+}
+
+struct ScriptEntry {
+    std::string path;
+    bool enabled;
+};
+
+static std::vector<ScriptEntry> ListScripts() {
+    namespace fs = std::filesystem;
+    std::error_code error;
+    fs::create_directories(ScriptsDir(), error);
+    std::vector<ScriptEntry> scripts;
+    for (const auto& entry : fs::directory_iterator(ScriptsDir(), error)) {
+        if (!entry.is_regular_file()) continue;
+        std::string name = entry.path().filename().string();
+        if (entry.path().extension() == ".lua") scripts.push_back({entry.path().string(), true});
+        else if (name.size() > 13 && name.compare(name.size() - 13, 13, ".lua.disabled") == 0)
+            scripts.push_back({entry.path().string(), false});
+    }
+    std::sort(scripts.begin(), scripts.end(), [](const ScriptEntry& a, const ScriptEntry& b) { return a.path < b.path; });
+    return scripts;
+}
+
+static std::string ScriptDisplayName(const ScriptEntry& script) {
+    std::string name = std::filesystem::path(script.path).filename().string();
+    if (!script.enabled) name.resize(name.size() - 9);
+    return name;
+}
+
+static void PopulateScriptsList(GtkBox* target);
+
+static void OnScriptToggled(GtkSwitch* toggle, gboolean state, gpointer data) {
+    const std::string& path = *static_cast<std::string*>(data);
+    std::string renamed = state ? path.substr(0, path.size() - 9) : path + ".disabled";
+    std::error_code error;
+    std::filesystem::rename(path, renamed, error);
+    if (error) return;
+    RequestScriptReload();
+    gpointer list = g_object_get_data(G_OBJECT(toggle), "scripts-list");
+    if (list) g_idle_add(+[](gpointer box) -> gboolean { PopulateScriptsList(GTK_BOX(box)); return G_SOURCE_REMOVE; }, list);
+}
+
 static void PopulateScriptsList(GtkBox* target) {
     GList* children = gtk_container_get_children(GTK_CONTAINER(target));
-    for (GList* iter = children; iter != nullptr; iter = g_list_next(iter)) {
-        gtk_widget_destroy(GTK_WIDGET(iter->data));
-    }
+    for (GList* iter = children; iter != nullptr; iter = g_list_next(iter)) gtk_widget_destroy(GTK_WIDGET(iter->data));
     g_list_free(children);
 
-    if (!std::filesystem::exists("scripts")) {
-        std::filesystem::create_directories("scripts");
+    std::vector<ScriptEntry> scripts = ListScripts();
+    for (const ScriptEntry& script : scripts) {
+        GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_style_context_add_class(gtk_widget_get_style_context(row), "row");
+        GtkWidget* icon = MakeSvgWidget(s_svg_lua_file.c_str(), 20);
+        GtkWidget* label = gtk_label_new(ScriptDisplayName(script).c_str());
+        gtk_label_set_xalign(GTK_LABEL(label), 0.f);
+        gtk_widget_set_hexpand(label, TRUE);
+
+        GtkWidget* edit = gtk_button_new_with_label("Edit");
+        gtk_widget_set_valign(edit, GTK_ALIGN_CENTER);
+        std::string* edit_path = new std::string(script.path);
+        g_signal_connect(edit, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) { OpenPath(*static_cast<std::string*>(p)); }), edit_path);
+        g_signal_connect(edit, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer p) { delete static_cast<std::string*>(p); }), edit_path);
+
+        GtkWidget* toggle = gtk_switch_new();
+        gtk_switch_set_active(GTK_SWITCH(toggle), script.enabled);
+        g_object_set_data(G_OBJECT(toggle), "scripts-list", target);
+        gtk_widget_set_valign(toggle, GTK_ALIGN_CENTER);
+        std::string* toggle_path = new std::string(script.path);
+        g_signal_connect(toggle, "state-set", G_CALLBACK(+[](GtkSwitch* sw, gboolean state, gpointer p) -> gboolean {
+            OnScriptToggled(sw, state, p);
+            return FALSE;
+        }), toggle_path);
+        g_signal_connect(toggle, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer p) { delete static_cast<std::string*>(p); }), toggle_path);
+
+        gtk_box_pack_start(GTK_BOX(row), icon, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(row), label, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(row), edit, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(row), toggle, FALSE, FALSE, 0);
+        gtk_box_pack_start(target, row, FALSE, FALSE, 0);
     }
-    int count = 0;
-    for (const auto& entry : std::filesystem::directory_iterator("scripts")) {
-        if (entry.is_regular_file() && entry.path().extension() == ".lua") {
-            count++;
-            std::string fname = entry.path().filename().string();
-            std::string full_path = entry.path().string();
-            GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-            gtk_style_context_add_class(gtk_widget_get_style_context(row), "row");
-            GtkWidget* icon = gtk_label_new("•");
-            GtkWidget* lbl = gtk_label_new(fname.c_str());
-            gtk_label_set_xalign(GTK_LABEL(lbl), 0.f);
-            gtk_widget_set_hexpand(lbl, TRUE);
-            GtkWidget* edit_btn = gtk_button_new_with_label("Edit");
-            std::string* ppath = new std::string(full_path);
-            g_signal_connect(edit_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
-                std::string cmd = "xdg-open " + *static_cast<std::string*>(p) + " >/dev/null 2>&1 &";
-                system(cmd.c_str());
-            }), ppath);
-            g_signal_connect(edit_btn, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer p) {
-                delete static_cast<std::string*>(p);
-            }), ppath);
-            gtk_box_pack_start(GTK_BOX(row), icon, FALSE, FALSE, 0);
-            gtk_box_pack_start(GTK_BOX(row), lbl, TRUE, TRUE, 0);
-            gtk_box_pack_start(GTK_BOX(row), edit_btn, FALSE, FALSE, 0);
-            gtk_box_pack_start(GTK_BOX(target), row, FALSE, FALSE, 0);
-        }
-    }
-    if (count == 0) {
-        GtkWidget* empty_lbl = gtk_label_new("No .lua scripts found in ./scripts");
-        gtk_label_set_xalign(GTK_LABEL(empty_lbl), 0.f);
-        gtk_box_pack_start(GTK_BOX(target), empty_lbl, FALSE, FALSE, 0);
+    if (scripts.empty()) {
+        std::string text = "No scripts yet. Put .lua files into " + ScriptsDir();
+        GtkWidget* empty = gtk_label_new(text.c_str());
+        gtk_label_set_xalign(GTK_LABEL(empty), 0.f);
+        gtk_label_set_line_wrap(GTK_LABEL(empty), TRUE);
+        gtk_box_pack_start(target, empty, FALSE, FALSE, 0);
     }
     gtk_widget_show_all(GTK_WIDGET(target));
 }
@@ -509,8 +602,8 @@ static GtkWidget* BuildGui() {
     GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(win), "spaxer");
     gtk_window_set_role(GTK_WINDOW(win), "spaxer-gui");
-    gtk_window_set_default_size(GTK_WINDOW(win), 720, 520);
-    gtk_widget_set_size_request(win, 720, 520);
+    gtk_window_set_default_size(GTK_WINDOW(win), 860, 620);
+    gtk_widget_set_size_request(win, 860, 620);
     gtk_window_set_resizable(GTK_WINDOW(win), FALSE);
     gtk_window_set_position(GTK_WINDOW(win), GTK_WIN_POS_CENTER_ALWAYS);
     gtk_window_set_decorated(GTK_WINDOW(win), FALSE);
@@ -541,7 +634,7 @@ static GtkWidget* BuildGui() {
 
     GtkWidget* sidebar_outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_name(sidebar_outer, "sidebar");
-    gtk_widget_set_size_request(sidebar_outer, 190, -1);
+    gtk_widget_set_size_request(sidebar_outer, 215, -1);
     gtk_box_pack_start(GTK_BOX(body), sidebar_outer, FALSE, TRUE, 0);
     GtkWidget* sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     gtk_box_pack_start(GTK_BOX(sidebar_outer), sidebar, TRUE, TRUE, 0);
@@ -600,7 +693,7 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(box), rcs, FALSE, FALSE, 0);
 
         gtk_stack_add_named(GTK_STACK(g_stack), page, "legit");
-        AddSidebarItem(sidebar, "◐", "legit", "Legit bot");
+        AddSidebarItemSvg(sidebar, s_svg_legit.c_str(), "legit", "Legit bot");
     }
     {
         GtkWidget* page = MakePage();
@@ -611,7 +704,7 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(c), MakeRow("Auto strafe", &g_cfg->auto_strafe, &g_cfg->bind_auto_strafe), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(box), c, FALSE, FALSE, 0);
         gtk_stack_add_named(GTK_STACK(g_stack), page, "movement");
-        AddSidebarItem(sidebar, "◒", "movement", "Movement");
+        AddSidebarItemSvg(sidebar, s_svg_movement.c_str(), "movement", "Movement");
     }
     {
         GtkWidget* page = MakePage();
@@ -681,7 +774,7 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(box), cross, FALSE, FALSE, 0);
 
         gtk_stack_add_named(GTK_STACK(g_stack), page, "render");
-        AddSidebarItem(sidebar, "◈", "render", "Render");
+        AddSidebarItemSvg(sidebar, s_svg_render.c_str(), "render", "Render");
     }
     {
         GtkWidget* page = MakePage();
@@ -701,7 +794,7 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(misc), MakeRow("Edit HUD",  &g_cfg->edit_mode, &g_cfg->bind_edit_hud), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(box), misc, FALSE, FALSE, 0);
         gtk_stack_add_named(GTK_STACK(g_stack), page, "misc");
-        AddSidebarItem(sidebar, "◓", "misc", "Misc");
+        AddSidebarItemSvg(sidebar, s_svg_misc.c_str(), "misc", "Misc");
     }
     {
         GtkWidget* page = MakePage();
@@ -709,7 +802,7 @@ static GtkWidget* BuildGui() {
         GtkWidget* card = MakeCard("LUA SCRIPTS");
         GtkWidget* btn_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         GtkWidget* btn_folder = gtk_button_new_with_label("Open folder");
-        GtkWidget* btn_refresh = gtk_button_new_with_label("Refresh");
+        GtkWidget* btn_refresh = gtk_button_new_with_label("Reload scripts");
         gtk_box_pack_start(GTK_BOX(btn_row), btn_folder, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(btn_row), btn_refresh, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(card), btn_row, FALSE, FALSE, 0);
@@ -720,15 +813,16 @@ static GtkWidget* BuildGui() {
         PopulateScriptsList(GTK_BOX(list_box));
 
         g_signal_connect(btn_folder, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
-            system("xdg-open scripts >/dev/null 2>&1 &");
+            OpenPath(ScriptsDir());
         }), nullptr);
         g_signal_connect(btn_refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer d) {
+            RequestScriptReload();
             PopulateScriptsList(GTK_BOX(d));
         }), list_box);
 
         gtk_box_pack_start(GTK_BOX(box), card, FALSE, FALSE, 0);
         gtk_stack_add_named(GTK_STACK(g_stack), page, "scripts");
-        AddSidebarItem(sidebar, "⚡", "scripts", "Scripts");
+        AddSidebarItemSvg(sidebar, s_svg_scripts.c_str(), "scripts", "Scripts");
     }
 
     gtk_stack_set_visible_child_name(GTK_STACK(g_stack), "legit");
