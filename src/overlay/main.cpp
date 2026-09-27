@@ -741,6 +741,7 @@ static gboolean OnDraw(GtkWidget* w, cairo_t* cr, gpointer) {
     DrawCrosshair(cr, a.width, a.height);
     DrawHitmarker(cr, a.width, a.height);
     DrawSpectators(cr, a.width);
+    features::PaintLua(cr, s_camera);
 
     if (settings::Enabled(g_cfg->edit_mode)) {
         DrawEditMarker(cr, s_r_wm);
@@ -765,6 +766,7 @@ static gboolean OnDraw(GtkWidget* w, cairo_t* cr, gpointer) {
 
 static gboolean Tick(gpointer) {
     if (!s_running.load()) { gtk_main_quit(); return G_SOURCE_REMOVE; }
+    features::TickLua();
     return G_SOURCE_CONTINUE;
 }
 
@@ -1298,6 +1300,19 @@ static GtkWidget* BuildGuiWindow() {
     gtk_box_pack_start(GTK_BOX(mv), Section("Movement"), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(mv), MakeToggleBind("Bunny hop", &g_cfg->bunnyhop, &g_cfg->bind_bunnyhop), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(mv), MakeToggleBind("Auto strafe", &g_cfg->auto_strafe, &g_cfg->bind_auto_strafe), FALSE, FALSE, 0);
+
+    GtkWidget* sc_page = AddPage(nb, "Scripts");
+    gtk_box_pack_start(GTK_BOX(sc_page), Section("Lua Scripts"), FALSE, FALSE, 0);
+    GtkWidget* btn_reload = gtk_button_new_with_label("Reload all scripts");
+    g_signal_connect(btn_reload, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
+        features::ReloadLua();
+    }), nullptr);
+    gtk_box_pack_start(GTK_BOX(sc_page), btn_reload, FALSE, FALSE, 0);
+    GtkWidget* btn_sc_dir = gtk_button_new_with_label("Open scripts folder");
+    g_signal_connect(btn_sc_dir, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
+        system("xdg-open scripts >/dev/null 2>&1 &");
+    }), nullptr);
+    gtk_box_pack_start(GTK_BOX(sc_page), btn_sc_dir, FALSE, FALSE, 0);
     return win;
 }
 
@@ -1629,6 +1644,7 @@ int main(int argc, char** argv) {
     features::StartAimbot();
     features::StartRcs();
     features::StartMovement();
+    features::InitLua(g_cfg);
     std::thread ft(FetchThread);
     std::thread ht(HotkeyThread);
 
@@ -1645,6 +1661,7 @@ int main(int argc, char** argv) {
     features::StopAimbot();
     features::StopRcs();
     features::StopMovement();
+    features::ShutdownLua();
     g_input.Shutdown();
     return 0;
 }

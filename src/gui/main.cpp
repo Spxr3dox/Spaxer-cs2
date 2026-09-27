@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <filesystem>
 
 static Settings* g_cfg = nullptr;
 static GtkWidget* g_win = nullptr;
@@ -459,6 +460,51 @@ static GtkWidget* Titlebar() {
     return bar;
 }
 
+static void PopulateScriptsList(GtkBox* target) {
+    GList* children = gtk_container_get_children(GTK_CONTAINER(target));
+    for (GList* iter = children; iter != nullptr; iter = g_list_next(iter)) {
+        gtk_widget_destroy(GTK_WIDGET(iter->data));
+    }
+    g_list_free(children);
+
+    if (!std::filesystem::exists("scripts")) {
+        std::filesystem::create_directories("scripts");
+    }
+    int count = 0;
+    for (const auto& entry : std::filesystem::directory_iterator("scripts")) {
+        if (entry.is_regular_file() && entry.path().extension() == ".lua") {
+            count++;
+            std::string fname = entry.path().filename().string();
+            std::string full_path = entry.path().string();
+            GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+            gtk_style_context_add_class(gtk_widget_get_style_context(row), "row");
+            GtkWidget* icon = gtk_label_new("•");
+            GtkWidget* lbl = gtk_label_new(fname.c_str());
+            gtk_label_set_xalign(GTK_LABEL(lbl), 0.f);
+            gtk_widget_set_hexpand(lbl, TRUE);
+            GtkWidget* edit_btn = gtk_button_new_with_label("Edit");
+            std::string* ppath = new std::string(full_path);
+            g_signal_connect(edit_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
+                std::string cmd = "xdg-open " + *static_cast<std::string*>(p) + " >/dev/null 2>&1 &";
+                system(cmd.c_str());
+            }), ppath);
+            g_signal_connect(edit_btn, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer p) {
+                delete static_cast<std::string*>(p);
+            }), ppath);
+            gtk_box_pack_start(GTK_BOX(row), icon, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(row), lbl, TRUE, TRUE, 0);
+            gtk_box_pack_start(GTK_BOX(row), edit_btn, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(target), row, FALSE, FALSE, 0);
+        }
+    }
+    if (count == 0) {
+        GtkWidget* empty_lbl = gtk_label_new("No .lua scripts found in ./scripts");
+        gtk_label_set_xalign(GTK_LABEL(empty_lbl), 0.f);
+        gtk_box_pack_start(GTK_BOX(target), empty_lbl, FALSE, FALSE, 0);
+    }
+    gtk_widget_show_all(GTK_WIDGET(target));
+}
+
 static GtkWidget* BuildGui() {
     GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(win), "spaxer");
@@ -529,6 +575,14 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(aim), MakeRow("Chest",  &g_cfg->aimbot_point_chest,  nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(aim), MakeRow("Pelvis", &g_cfg->aimbot_point_pelvis, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(box), aim, FALSE, FALSE, 0);
+
+        GtkWidget* human = MakeCard("HUMANIZATION");
+        gtk_box_pack_start(GTK_BOX(human), MakeRow("Enabled", &g_cfg->aimbot_humanize, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(human), MakeSliderRow("Speed min", &g_cfg->aimbot_speed_min_x100, 1, 100, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(human), MakeSliderRow("Speed max", &g_cfg->aimbot_speed_max_x100, 1, 100, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(human), MakeSliderRow("Shake", &g_cfg->aimbot_shake_x100, 0, 100, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(human), MakeSliderRow("Release speed", &g_cfg->aimbot_release_x100, 5, 100, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(box), human, FALSE, FALSE, 0);
 
         GtkWidget* tb = MakeCard("TRIGGER BOT");
         gtk_box_pack_start(GTK_BOX(tb), MakeRow("Enabled",        &g_cfg->trigger_enabled,         &g_cfg->bind_trigger), FALSE, FALSE, 0);
@@ -648,6 +702,33 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(box), misc, FALSE, FALSE, 0);
         gtk_stack_add_named(GTK_STACK(g_stack), page, "misc");
         AddSidebarItem(sidebar, "◓", "misc", "Misc");
+    }
+    {
+        GtkWidget* page = MakePage();
+        GtkWidget* box = PageBox(page);
+        GtkWidget* card = MakeCard("LUA SCRIPTS");
+        GtkWidget* btn_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        GtkWidget* btn_folder = gtk_button_new_with_label("Open folder");
+        GtkWidget* btn_refresh = gtk_button_new_with_label("Refresh");
+        gtk_box_pack_start(GTK_BOX(btn_row), btn_folder, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(btn_row), btn_refresh, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(card), btn_row, FALSE, FALSE, 0);
+
+        GtkWidget* list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+        gtk_box_pack_start(GTK_BOX(card), list_box, FALSE, FALSE, 0);
+
+        PopulateScriptsList(GTK_BOX(list_box));
+
+        g_signal_connect(btn_folder, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
+            system("xdg-open scripts >/dev/null 2>&1 &");
+        }), nullptr);
+        g_signal_connect(btn_refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer d) {
+            PopulateScriptsList(GTK_BOX(d));
+        }), list_box);
+
+        gtk_box_pack_start(GTK_BOX(box), card, FALSE, FALSE, 0);
+        gtk_stack_add_named(GTK_STACK(g_stack), page, "scripts");
+        AddSidebarItem(sidebar, "⚡", "scripts", "Scripts");
     }
 
     gtk_stack_set_visible_child_name(GTK_STACK(g_stack), "legit");

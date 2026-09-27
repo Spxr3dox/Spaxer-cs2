@@ -136,6 +136,11 @@ struct Settings {
     uint32_t arrows_rgba;
     int32_t  arrows_radius;
     int32_t  arrows_size;
+    uint32_t aimbot_humanize;
+    int32_t  aimbot_speed_min_x100;
+    int32_t  aimbot_speed_max_x100;
+    int32_t  aimbot_shake_x100;
+    int32_t  aimbot_release_x100;
 };
 
 namespace settings {

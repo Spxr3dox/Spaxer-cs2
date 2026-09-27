@@ -25,7 +25,7 @@ const char* Path() {
     return s_path;
 }
 
-static constexpr uint32_t kMigrationLevel = 2;
+static constexpr uint32_t kMigrationLevel = 3;
 
 static void DefaultEspExtras(Settings& s) {
     s.sound_esp_rgba = 0x00CCFFC0;
@@ -36,9 +36,18 @@ static void DefaultEspExtras(Settings& s) {
     s.arrows_size = 12;
 }
 
+static void DefaultHumanizer(Settings& s) {
+    s.aimbot_humanize = 0;
+    s.aimbot_speed_min_x100 = 20;
+    s.aimbot_speed_max_x100 = 45;
+    s.aimbot_shake_x100 = 15;
+    s.aimbot_release_x100 = 35;
+}
+
 static void Migrate(Settings& s) {
     if (s.migration_level < 1) s.render_lead_ms = 30;
     if (s.migration_level < 2) DefaultEspExtras(s);
+    if (s.migration_level < 3) DefaultHumanizer(s);
     s.migration_level = kMigrationLevel;
 }
 
@@ -146,6 +155,7 @@ void Defaults(Settings& s) {
     DefaultChams(s);
     s.render_lead_ms = 30;
     DefaultEspExtras(s);
+    DefaultHumanizer(s);
     s.migration_level = kMigrationLevel;
 }
 

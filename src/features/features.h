@@ -1,5 +1,7 @@
 #pragma once
 struct Settings;
+typedef struct _cairo cairo_t;
+namespace render { struct Camera; }
 
 namespace features {
     void UpdateBomb();
@@ -21,4 +23,9 @@ namespace features {
     void ApplyRadarHack();
     void UpdateHitmarker();
     void UpdateSoundEsp();
+    void InitLua(Settings* cfg);
+    void ShutdownLua();
+    void ReloadLua();
+    void PaintLua(cairo_t* cr, const render::Camera& camera);
+    void TickLua();
 }

@@ -158,7 +158,7 @@ static void EnsureKbd() {
 }
 
 bool Input::IsMouseDown(int button) const {
-    int code = button == 1 ? BTN_LEFT : button == 3 ? BTN_RIGHT : button == 4 ? BTN_SIDE : button == 5 ? BTN_EXTRA : -1;
+    int code = button == 1 ? BTN_LEFT : button == 2 ? BTN_MIDDLE : button == 3 ? BTN_RIGHT : button == 4 ? BTN_SIDE : button == 5 ? BTN_EXTRA : -1;
     if (code < 0) return false;
     unsigned char keys[(KEY_CNT + 7) / 8] = {};
     for (int i = 0; i < m_mouse_count; i++) {

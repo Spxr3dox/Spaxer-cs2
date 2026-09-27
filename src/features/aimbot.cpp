@@ -8,6 +8,8 @@
 #include <chrono>
 #include <cmath>
 #include <vector>
+#include <algorithm>
+#include <random>
 
 namespace features {
 
@@ -84,32 +86,102 @@ static float AngleDelta(const Vec3& eye, const Vec3& va, const Vec3& point, Vec3
     return sqrtf(d_yaw * d_yaw + d_pitch * d_pitch);
 }
 
-static void Loop() {
-    Settings* cfg = settings::Attach();
-    if (!cfg) return;
+class Humanizer {
+public:
+    Humanizer() : rng_(std::random_device{}()) { Retarget(); }
+
+    float Speed(const Settings& cfg, float base, std::chrono::steady_clock::time_point now) {
+        if (!settings::Enabled(cfg.aimbot_humanize)) return base;
+        float low = std::clamp(cfg.aimbot_speed_min_x100, 1, 100) / 100.f;
+        float high = std::clamp(cfg.aimbot_speed_max_x100, 1, 100) / 100.f;
+        if (low > high) std::swap(low, high);
+        if (now >= next_speed_change_ || speed_goal_ < low || speed_goal_ > high) {
+            speed_goal_ = std::uniform_real_distribution<float>(low, high)(rng_);
+            next_speed_change_ = now + std::chrono::milliseconds(std::uniform_int_distribution<int>(120, 380)(rng_));
+            if (speed_current_ <= 0.f) speed_current_ = speed_goal_;
+        }
+        speed_current_ += (speed_goal_ - speed_current_) * 0.15f;
+        return speed_current_;
+    }
+
+    void Shake(const Settings& cfg, std::chrono::steady_clock::time_point now, float& move_x, float& move_y) {
+        float amplitude = settings::Enabled(cfg.aimbot_humanize) ? std::clamp(cfg.aimbot_shake_x100, 0, 100) / 100.f * 4.f : 0.f;
+        float t = std::chrono::duration<float>(now.time_since_epoch()).count();
+        constexpr float tau = 6.2831853f;
+        float offset_x = amplitude * (0.6f * std::sin(tau * 3.1f * t + phase_[0]) + 0.4f * std::sin(tau * 7.3f * t + phase_[1]));
+        float offset_y = amplitude * 0.7f * (0.6f * std::sin(tau * 2.7f * t + phase_[2]) + 0.4f * std::sin(tau * 6.1f * t + phase_[3]));
+        move_x += offset_x - shake_x_;
+        move_y += offset_y - shake_y_;
+        shake_x_ = offset_x;
+        shake_y_ = offset_y;
+    }
+
+    void Track(float move_x, float move_y) {
+        velocity_x_ = velocity_x_ * 0.5f + move_x * 0.5f;
+        velocity_y_ = velocity_y_ * 0.5f + move_y * 0.5f;
+    }
+
+    bool Release(const Settings& cfg, float& move_x, float& move_y) {
+        if (!settings::Enabled(cfg.aimbot_humanize)) return false;
+        float decay = std::clamp(cfg.aimbot_release_x100, 5, 100) / 100.f;
+        velocity_x_ *= 1.f - decay;
+        velocity_y_ *= 1.f - decay;
+        shake_x_ = shake_y_ = 0.f;
+        if (std::fabs(velocity_x_) < 0.3f && std::fabs(velocity_y_) < 0.3f) return false;
+        move_x = velocity_x_;
+        move_y = velocity_y_;
+        return true;
+    }
+
+    void Stop() {
+        velocity_x_ = velocity_y_ = 0.f;
+        shake_x_ = shake_y_ = 0.f;
+    }
+
+    void Retarget() {
+        std::uniform_real_distribution<float> phase(0.f, 6.2831853f);
+        for (float& value : phase_) value = phase(rng_);
+        speed_current_ = 0.f;
+        next_speed_change_ = {};
+    }
+
+private:
+    std::mt19937 rng_;
+    float speed_goal_ = 0.f, speed_current_ = 0.f;
+    std::chrono::steady_clock::time_point next_speed_change_{};
+    float phase_[4]{};
+    float shake_x_ = 0.f, shake_y_ = 0.f;
+    float velocity_x_ = 0.f, velocity_y_ = 0.f;
+};
+
+enum class AimResult { Blocked, Idle, Aim };
+
+struct AimState {
     uintptr_t locked = 0;
     uintptr_t last_target = 0;
-    float rest_x = 0.f, rest_y = 0.f;
-    auto switch_ready = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point switch_ready = std::chrono::steady_clock::now();
+};
 
-    while (s_running.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(8));
-
+static AimResult ComputeAim(Settings* cfg, AimState& state, Humanizer& humanizer, float& move_x, float& move_y) {
+    uintptr_t& locked = state.locked;
+    uintptr_t& last_target = state.last_target;
+    auto& switch_ready = state.switch_ready;
+    {
         uintptr_t pawn = game::LocalPawn();
-        if (!pawn) { locked = 0; continue; }
+        if (!pawn) { locked = 0; return AimResult::Blocked; }
         WeaponSettings* weapon = settings::WeaponFor(*cfg, game::ActiveWeaponDefinitionIndex(pawn));
         bool aimbot_enabled = weapon ? settings::Enabled(weapon->aimbot_enabled) : settings::Enabled(cfg->aimbot_enabled);
-        if (!aimbot_enabled || !g_hud.cs2_focused.load() || !g_proc.IsAlive()) { locked = 0; continue; }
+        if (!aimbot_enabled || !g_hud.cs2_focused.load() || !g_proc.IsAlive()) { locked = 0; return AimResult::Blocked; }
         uintptr_t list = game::EntityList();
-        if (!list) continue;
+        if (!list) return AimResult::Blocked;
         int my_hp = g_proc.Read<int>(pawn + off::m_iHealth);
-        if (my_hp <= 0) { locked = 0; continue; }
+        if (my_hp <= 0) { locked = 0; return AimResult::Blocked; }
         int my_team = game::Team(pawn);
-        if (!AimKeyHeld(cfg->aimbot_key_mode)) { locked = 0; rest_x = rest_y = 0.f; continue; }
+        if (!AimKeyHeld(cfg->aimbot_key_mode)) { locked = 0; return AimResult::Idle; }
         bool need_visible = !settings::Enabled(cfg->aimbot_thru_walls);
 
         if (settings::Enabled(cfg->aimbot_flash_check) && off::m_flFlashDuration &&
-            g_proc.Read<float>(pawn + off::m_flFlashDuration) > 0.3f) { locked = 0; continue; }
+            g_proc.Read<float>(pawn + off::m_flFlashDuration) > 0.3f) { locked = 0; return AimResult::Idle; }
 
         Vec3 eye = game::EyePosition(pawn);
         Vec3 va = g_proc.Read<Vec3>(pawn + off::m_angEyeAngles);
@@ -158,16 +230,13 @@ static void Loop() {
             switch_ready = now + std::chrono::milliseconds(switch_delay_ms);
             last_target = 0;
             locked = 0;
-            rest_x = rest_y = 0.f;
-            continue;
+            return AimResult::Idle;
         }
-        if (target && !last_target && now < switch_ready) {
-            rest_x = rest_y = 0.f;
-            continue;
-        }
+        if (target && !last_target && now < switch_ready) return AimResult::Idle;
+        if (target != last_target) humanizer.Retarget();
         last_target = target;
         locked = target;
-        if (!target) { rest_x = rest_y = 0.f; continue; }
+        if (!target) return AimResult::Idle;
 
         Vec3 aim_point;
         if (settings::Enabled(cfg->aimbot_point_head)) {
@@ -185,23 +254,44 @@ static void Loop() {
         }
 
         Vec3 desired;
-        if (AngleDelta(eye, va, aim_point, desired) < 0.05f) { rest_x = rest_y = 0.f; continue; }
+        if (AngleDelta(eye, va, aim_point, desired) < 0.05f) { move_x = move_y = 0.f; return AimResult::Aim; }
         float d_yaw = NormAngle(desired.y - va.y);
         float d_pitch = NormAngle(desired.x - va.x);
-        float smooth = (weapon ? weapon->aimbot_smooth_x100 : cfg->aimbot_smooth_x100) / 100.f;
-        if (smooth < 0.05f) smooth = 0.05f;
-        if (smooth > 1.0f)  smooth = 1.0f;
+        float base_smooth = (weapon ? weapon->aimbot_smooth_x100 : cfg->aimbot_smooth_x100) / 100.f;
+        float smooth = std::clamp(humanizer.Speed(*cfg, base_smooth, now), 0.02f, 1.f);
+        move_x = -d_yaw / deg_per_pixel * smooth;
+        move_y = d_pitch / deg_per_pixel * smooth;
+        return AimResult::Aim;
+    }
+}
 
-        float move_x = -d_yaw / deg_per_pixel * smooth + rest_x;
-        float move_y = d_pitch / deg_per_pixel * smooth + rest_y;
+static void Loop() {
+    Settings* cfg = settings::Attach();
+    if (!cfg) return;
+    AimState state;
+    Humanizer humanizer;
+    float rest_x = 0.f, rest_y = 0.f;
+
+    while (s_running.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        float move_x = 0.f, move_y = 0.f;
+        AimResult result = ComputeAim(cfg, state, humanizer, move_x, move_y);
+        if (result == AimResult::Aim) {
+            humanizer.Shake(*cfg, std::chrono::steady_clock::now(), move_x, move_y);
+            humanizer.Track(move_x, move_y);
+        } else if (result == AimResult::Blocked || !humanizer.Release(*cfg, move_x, move_y)) {
+            humanizer.Stop();
+            rest_x = rest_y = 0.f;
+            continue;
+        }
+        move_x += rest_x;
+        move_y += rest_y;
         int dx = static_cast<int>(move_x);
         int dy = static_cast<int>(move_y);
         rest_x = move_x - dx;
         rest_y = move_y - dy;
-        if (dx >  200) dx =  200;
-        if (dx < -200) dx = -200;
-        if (dy >  150) dy =  150;
-        if (dy < -150) dy = -150;
+        dx = std::clamp(dx, -200, 200);
+        dy = std::clamp(dy, -150, 150);
         if (dx || dy) g_input.MouseMove(dx, dy);
     }
 }

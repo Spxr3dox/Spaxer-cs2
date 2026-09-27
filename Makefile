@@ -3,8 +3,8 @@ CXXFLAGS := -std=c++20 -O2 -pipe -Wall -Wextra -Wno-unused-parameter -Wno-deprec
 
 INCLUDES := -Isrc
 
-PKG_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 gtk-layer-shell-0 cairo x11 xtst)
-PKG_LIBS   := $(shell pkg-config --libs   gtk+-3.0 gtk-layer-shell-0 cairo x11 xtst)
+PKG_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 gtk-layer-shell-0 cairo x11 xtst luajit)
+PKG_LIBS   := $(shell pkg-config --libs   gtk+-3.0 gtk-layer-shell-0 cairo x11 xtst luajit)
 
 GUI_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 x11)
 GUI_LIBS   := $(shell pkg-config --libs   gtk+-3.0 x11)
@@ -28,6 +28,7 @@ SRC := \
   src/features/hitmarker.cpp \
   src/features/sound_esp.cpp \
   src/features/movement.cpp \
+  src/features/lua_engine.cpp \
   src/render/camera.cpp \
   src/render/model_chams.cpp \
   src/overlay/world.cpp \
