@@ -163,4 +163,8 @@
     X(hud_keys_x, Number) \
     X(hud_keys_y, Number) \
     X(hud_notif_x, Number) \
-    X(hud_notif_y, Number)
+    X(hud_notif_y, Number) \
+    X(trigger_spread, Toggle) \
+    X(bind_spread_trigger, Bind) \
+    X(spread_coverage, Number) \
+    X(spread_head_only, Toggle)

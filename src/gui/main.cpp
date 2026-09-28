@@ -1131,6 +1131,12 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(tb), MakeFovSliderRow("FOV", &g_cfg->trigger_fov_x100), FALSE, FALSE, 0);
         Place(page, tb, true);
 
+        GtkWidget* spread = MakeCard("SPREAD TRIGGER");
+        gtk_box_pack_start(GTK_BOX(spread), MakeRow("Enabled", &g_cfg->trigger_spread, &g_cfg->bind_spread_trigger), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(spread), MakeSliderRow("Coverage %", &g_cfg->spread_coverage, 50, 100, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(spread), MakeRow("Head only", &g_cfg->spread_head_only, nullptr), FALSE, FALSE, 0);
+        Place(page, spread, true);
+
         GtkWidget* rcs = MakeCard("RCS");
         gtk_box_pack_start(GTK_BOX(rcs), MakeRow("Enabled", &g_cfg->rcs_enabled, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(rcs), MakeSliderRow("Strength", &g_cfg->rcs_strength_x100, 0, 100, 1), FALSE, FALSE, 0);

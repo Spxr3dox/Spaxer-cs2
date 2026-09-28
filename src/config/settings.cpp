@@ -26,7 +26,7 @@ const char* Path() {
     return s_path;
 }
 
-static constexpr uint32_t kMigrationLevel = 18;
+static constexpr uint32_t kMigrationLevel = 19;
 
 static void DefaultEspExtras(Settings& s) {
     s.sound_esp_rgba = 0x00CCFFC0;
@@ -69,11 +69,16 @@ static void Migrate(Settings& s) {
         s.esp_flags = 1;
         s.grenade_world = 1;
     }
+    if (s.migration_level < 19) s.spread_coverage = 100;
     if (s.migration_level < 18) s.hud_notif_x = s.hud_notif_y = -1;
     if (s.migration_level < 17) {
         s.notifications = 1;
         s.hud_keys_x = s.hud_keys_y = -1;
     s.hud_notif_x = s.hud_notif_y = -1;
+    s.trigger_spread = 0;
+    s.bind_spread_trigger = 0;
+    s.spread_coverage = 100;
+    s.spread_head_only = 0;
         if (s.hud_spectators_x == 0 && s.hud_spectators_y == 0) s.hud_spectators_x = s.hud_spectators_y = -1;
         if (s.hud_media_x == 0 && s.hud_media_y == 0) s.hud_media_x = s.hud_media_y = -1;
     }
@@ -380,10 +385,10 @@ bool LoadConfig(const std::string& name) {
     tmp.version = SETTINGS_VERSION;
     Settings* s = Attach();
     if (!s) return false;
+    RememberConfig(clean);
     uint32_t saved_edit_mode = s->edit_mode;
     *s = tmp;
     s->edit_mode = saved_edit_mode;
-    RememberConfig(clean);
     return true;
 }
 

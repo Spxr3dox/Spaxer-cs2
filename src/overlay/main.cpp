@@ -705,6 +705,7 @@ static std::vector<KeybindEntry> KeybindEntries() {
         {"Night mode", &g_cfg->bind_night_mode, &g_cfg->night_mode},
         {"Fast stop", &g_cfg->bind_fast_stop, &g_cfg->fast_stop_enabled},
         {"Force shot", &g_cfg->bind_force_shot, &g_cfg->trigger_force_shot},
+        {"Spread trigger", &g_cfg->bind_spread_trigger, &g_cfg->trigger_spread},
         {"Min damage", &g_cfg->bind_md_override, &g_cfg->trigger_md_override},
         {"Sound ESP", &g_cfg->bind_sound_esp, &g_cfg->sound_esp},
         {"Weapon ESP", &g_cfg->bind_weapon_esp, &g_cfg->esp_dropped_weapons},
@@ -1843,6 +1844,28 @@ static void OnBool(GtkToggleButton* b, gpointer field) {
     if (field == &g_cfg->edit_mode) ApplyInputMode();
 }
 
+static void AutosaveConfig() {
+    static std::string s_name;
+    static std::vector<char> s_snapshot;
+    std::string name = settings::LastConfig();
+    const char* bytes = reinterpret_cast<const char*>(g_cfg);
+    std::vector<char> current(bytes, bytes + sizeof(Settings));
+    Settings* view = reinterpret_cast<Settings*>(current.data());
+    view->edit_mode = 0;
+    if (name != s_name) {
+        s_name = name;
+        s_snapshot.swap(current);
+        return;
+    }
+    if (name.empty() || current == s_snapshot) return;
+    if (settings::SaveConfig(name)) s_snapshot.swap(current);
+}
+
+static gboolean AutosaveTick(gpointer) {
+    AutosaveConfig();
+    return G_SOURCE_CONTINUE;
+}
+
 static gboolean SyncToggles(gpointer) {
     saturation::Update(*g_cfg, g_hud.cs2_focused.load() && g_hud.in_game.load());
     static bool prev_edit_mode = false;
@@ -2250,6 +2273,7 @@ static void CrashShutdown(int sig) {
 static void PanicShutdown(int) {
     std::signal(SIGSEGV, CrashShutdown);
     std::signal(SIGABRT, CrashShutdown);
+    AutosaveConfig();
     features::StopTriggerBot();
     features::StopAimbot();
     features::StopRcs();
@@ -2419,6 +2443,7 @@ static void HotkeyThread() {
         {&g_cfg->bind_night_mode, &g_cfg->night_mode, nullptr},
         {&g_cfg->bind_thirdperson, &g_cfg->thirdperson, nullptr},
         {&g_cfg->bind_force_shot, &g_cfg->trigger_force_shot, nullptr},
+        {&g_cfg->bind_spread_trigger, &g_cfg->trigger_spread, nullptr},
         {&g_cfg->bind_fast_stop, &g_cfg->fast_stop_enabled, nullptr},
         {&g_cfg->bind_md_override, &g_cfg->trigger_md_override, nullptr},
         {&g_cfg->bind_edge_bug, &g_cfg->edge_bug, nullptr},
@@ -2660,8 +2685,10 @@ int main(int argc, char** argv) {
     g_timeout_add(100, Tick, nullptr);
     gtk_widget_add_tick_callback(g_area, OnFrameClock, nullptr, nullptr);
     g_timeout_add(150, SyncToggles, nullptr);
+    g_timeout_add(2000, AutosaveTick, nullptr);
     g_timeout_add(200, HideGuiIfCs2Blurred, nullptr);
     gtk_main();
+    AutosaveConfig();
     saturation::Reset();
 
     s_running.store(false);

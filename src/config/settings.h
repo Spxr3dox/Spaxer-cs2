@@ -195,6 +195,10 @@ struct Settings {
     int32_t  hud_keys_y;
     int32_t  hud_notif_x;
     int32_t  hud_notif_y;
+    uint32_t trigger_spread;
+    uint32_t bind_spread_trigger;
+    int32_t  spread_coverage;
+    uint32_t spread_head_only;
 };
 
 namespace settings {

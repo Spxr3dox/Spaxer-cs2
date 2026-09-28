@@ -154,7 +154,7 @@ static float ClosestOnSegment(float px, float py, float ax, float ay, float bx, 
     return t;
 }
 
-struct ProjectedCapsule { float ax, ay, bx, by, radius; };
+struct ProjectedCapsule { float ax, ay, bx, by, radius; bool head; };
 
 static bool ProjectHitboxes(uintptr_t local_pawn, uintptr_t target, float tolerance, std::vector<ProjectedCapsule>& out,
                             float& aim_x, float& aim_y) {
@@ -175,7 +175,7 @@ static bool ProjectHitboxes(uintptr_t local_pawn, uintptr_t target, float tolera
         if (!game::BoneNearOrigin(a, origin) || !game::BoneNearOrigin(b, origin)) continue;
         float ax, ay, a_depth, bx, by, b_depth;
         if (!view.Project(a, ax, ay, a_depth) || !view.Project(b, bx, by, b_depth)) continue;
-        out.push_back({ax, ay, bx, by, capsule.radius * tolerance / std::max(a_depth, b_depth)});
+        out.push_back({ax, ay, bx, by, capsule.radius * tolerance / std::max(a_depth, b_depth), capsule.damage_scale >= 4.f});
     }
     return !out.empty();
 }
@@ -237,6 +237,33 @@ static int HitChancePercent(uintptr_t local_pawn, uintptr_t target, float cone, 
         }
     }
     return hits * 100 / kHitChanceSamples;
+}
+
+static bool SpreadCovered(uintptr_t local_pawn, uintptr_t target, float cone, float tolerance, int coverage, bool head_only) {
+    std::vector<ProjectedCapsule> capsules;
+    float aim_x, aim_y;
+    if (!ProjectHitboxes(local_pawn, target, tolerance, capsules, aim_x, aim_y)) return false;
+    float spread = std::tan(cone);
+    auto inside = [&](float px, float py) {
+        for (const ProjectedCapsule& capsule : capsules) {
+            if (head_only && !capsule.head) continue;
+            float distance;
+            ClosestOnSegment(px, py, capsule.ax, capsule.ay, capsule.bx, capsule.by, distance);
+            if (distance < capsule.radius) return true;
+        }
+        return false;
+    };
+    if (!inside(aim_x, aim_y)) return false;
+    constexpr int kRing = 24;
+    int total = 0, hits = 0;
+    for (float scale : {0.5f, 1.0f}) {
+        for (int i = 0; i < kRing; i++) {
+            float angle = i * 6.2831853f / kRing;
+            total++;
+            if (inside(aim_x + std::cos(angle) * spread * scale, aim_y + std::sin(angle) * spread * scale)) hits++;
+        }
+    }
+    return hits * 100 >= std::clamp(coverage, 1, 100) * total;
 }
 
 class StopHold {
@@ -377,7 +404,8 @@ static void Loop() {
         uintptr_t pawn = game::LocalPawn();
         WeaponSettings* weapon = pawn ? settings::WeaponFor(*cfg, game::ActiveWeaponDefinitionIndex(pawn)) : nullptr;
         bool trigger_enabled = weapon ? settings::Enabled(weapon->trigger_enabled) : settings::Enabled(cfg->trigger_enabled);
-        if (!trigger_enabled || !g_hud.cs2_focused.load() || !g_proc.IsAlive()) {
+        bool spread_trigger = settings::Enabled(cfg->trigger_spread);
+        if ((!trigger_enabled && !spread_trigger) || !g_hud.cs2_focused.load() || !g_proc.IsAlive()) {
             stop_hold.Release();
             g_input.HoldCrouch(false);
             aim.aimFrames = 0;
@@ -447,7 +475,7 @@ static void Loop() {
         }
 
         vis::Ballistics ballistics{};
-        bool autowall = settings::Enabled(cfg->autowall) && vis::Ready() && off::dwViewMatrix &&
+        bool autowall = trigger_enabled && settings::Enabled(cfg->autowall) && vis::Ready() && off::dwViewMatrix &&
                         vis::WeaponBallistics(game::ActiveWeaponDefinitionIndex(pawn), ballistics);
         bool force_shot = settings::Enabled(cfg->trigger_force_shot);
         int damage_setting = settings::Enabled(cfg->trigger_md_override) ? cfg->md_override_value : cfg->autowall_min_damage;
@@ -517,7 +545,10 @@ static void Loop() {
             if (clock::now() - scoped_since < std::chrono::milliseconds(120)) { aim.aimFrames = 0; continue; }
         }
         int hitchance = weapon ? weapon->trigger_hitchance : cfg->trigger_hitchance;
-        if (hitchance > 0 && !force_shot) {
+        if (spread_trigger && !force_shot && !wall_target) {
+            float cone = InaccuracyCone(pawn, def_idx, is_scoped, IsSniper(def_idx));
+            if (!SpreadCovered(pawn, target, cone, 1.0f, cfg->spread_coverage, settings::Enabled(cfg->spread_head_only))) { aim.aimFrames = 0; continue; }
+        } else if (hitchance > 0 && !force_shot) {
             float cone = InaccuracyCone(pawn, def_idx, is_scoped, IsSniper(def_idx));
             if (HitChancePercent(pawn, target, cone, is_sniper ? 0.85f : 1.0f) < hitchance) { aim.aimFrames = 0; continue; }
         }
