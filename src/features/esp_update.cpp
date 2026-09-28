@@ -135,15 +135,54 @@ static const char* WeaponName(int definition) {
     }
 }
 
-static void ReadWeapon(uintptr_t list, uintptr_t pawn, char weapon[24]) {
-    if (!list || !pawn || !off::m_pWeaponServices || !off::m_hActiveWeapon ||
-        !off::m_AttributeManager || !off::m_Item || !off::m_iItemDefinitionIndex) return;
-    uintptr_t services = g_proc.Read<uintptr_t>(pawn + off::m_pWeaponServices);
-    uint32_t handle = services ? g_proc.Read<uint32_t>(services + off::m_hActiveWeapon) : 0;
-    uintptr_t entity = game::EntityFromList(list, handle & 0x7FFF);
-    int definition = entity ? g_proc.Read<int>(entity + off::m_AttributeManager + off::m_Item + off::m_iItemDefinitionIndex) : 0;
+static int MagazineSize(int definition) {
+    switch (definition) {
+        case 1: return 7;
+        case 2: return 30;
+        case 3: return 20;
+        case 4: return 20;
+        case 7: return 30;
+        case 8: return 30;
+        case 9: return 5;
+        case 10: return 25;
+        case 11: return 20;
+        case 13: return 35;
+        case 14: return 100;
+        case 16: return 30;
+        case 17: return 30;
+        case 19: return 50;
+        case 23: return 30;
+        case 24: return 25;
+        case 25: return 7;
+        case 26: return 64;
+        case 27: return 5;
+        case 28: return 150;
+        case 29: return 7;
+        case 30: return 18;
+        case 32: return 13;
+        case 33: return 30;
+        case 34: return 30;
+        case 35: return 8;
+        case 36: return 13;
+        case 38: return 20;
+        case 39: return 30;
+        case 40: return 10;
+        case 60: return 20;
+        case 61: return 12;
+        case 63: return 12;
+        case 64: return 8;
+        default: return 0;
+    }
+}
+
+static void ReadWeapon(uintptr_t list, uintptr_t pawn, EspEntry& entry) {
+    if (!list || !pawn || !off::m_AttributeManager || !off::m_Item || !off::m_iItemDefinitionIndex) return;
+    uintptr_t weapon = game::ActiveWeapon(pawn);
+    int definition = weapon ? g_proc.Read<int>(weapon + off::m_AttributeManager + off::m_Item + off::m_iItemDefinitionIndex) : 0;
     const char* name = WeaponName(definition);
-    if (name[0]) strncpy(weapon, name, 23);
+    if (name[0]) strncpy(entry.weapon, name, sizeof(entry.weapon) - 1);
+    entry.max_ammo = MagazineSize(definition);
+    entry.ammo = entry.max_ammo && off::m_iClip1 ? std::clamp(g_proc.Read<int>(weapon + off::m_iClip1), 0, entry.max_ammo) : 0;
 }
 
 static void UpdateSpectators(uintptr_t list, uintptr_t local_pawn) {
@@ -191,10 +230,10 @@ static int ScanWorldObjects(uintptr_t list) {
     int bomb_carrier = -1;
     std::vector<ThrownGrenade> grenades;
     double now = NowSeconds();
-    char name[40];
-    for (int i = 65; i < 2048; i++) {
-        uintptr_t entity = game::EntityFromList(list, i);
-        if (!entity || !game::DesignerName(entity, name, sizeof(name))) continue;
+    for (const game::EntitySlot& slot : game::EntitySnapshot(list, 65, 2048)) {
+        uintptr_t entity = slot.entity;
+        const char* name = slot.designer;
+        if (!name[0]) continue;
         if (!strcmp(name, "weapon_c4")) {
             uint32_t owner = off::m_hOwnerEntity ? g_proc.Read<uint32_t>(entity + off::m_hOwnerEntity) : 0xFFFFFFFF;
             if (owner && owner != 0xFFFFFFFF) bomb_carrier = static_cast<int>(owner & 0x7FFF);
@@ -303,7 +342,7 @@ void UpdateEsp() {
         e.visible = game::SpottedBy(pawn, off::g_LocalControllerIdx, e.spotted_valid);
 
         ReadPlayerName(ctrl, e.name);
-        ReadWeapon(list, pawn, e.weapon);
+        ReadWeapon(list, pawn, e);
         e.pawn = pawn;
         e.flags = ReadFlags(list, pawn, static_cast<int>(ph & 0x7FFF) == bomb_carrier);
         ReadModelStem(sn, e.model);
@@ -327,9 +366,9 @@ void UpdateEsp() {
         }
         std::vector<DroppedItemEntry> items;
         items.reserve(32);
-        for (int i = 64; i < 1024; i++) {
-            uintptr_t entity = game::EntityFromList(list, i);
-            if (!entity) continue;
+        for (const game::EntitySlot& slot : game::EntitySnapshot(list, 64, 1024)) {
+            uintptr_t entity = slot.entity;
+            if (strncmp(slot.designer, "weapon_", 7) != 0) continue;
             int def = (off::m_AttributeManager && off::m_Item && off::m_iItemDefinitionIndex) ?
                 g_proc.Read<int>(entity + off::m_AttributeManager + off::m_Item + off::m_iItemDefinitionIndex) : 0;
             const char* wname = WeaponName(def);

@@ -1,6 +1,8 @@
 #include "hitmarker.h"
 #include "features.h"
 #include "config/settings.h"
+#include "features/hit_sound.h"
+#include "state.h"
 #include <array>
 
 namespace features {
@@ -32,7 +34,10 @@ static Vec3 HitPosition(uintptr_t local_pawn, uintptr_t pawn) {
 
 void UpdateHitmarker() {
     Settings* cfg = settings::Attach();
-    if (!cfg || !settings::Enabled(cfg->hitmarker) || !g_proc.IsAlive()) return;
+    bool markers = cfg && settings::Enabled(cfg->hitmarker);
+    auto sound = cfg ? static_cast<hitsound::Style>(cfg->hit_sound) : hitsound::Style::Off;
+    bool notices = cfg && settings::Enabled(cfg->notifications);
+    if (!cfg || (!markers && sound == hitsound::Style::Off && !notices) || !g_proc.IsAlive()) return;
     uintptr_t list = game::EntityList();
     uintptr_t local_pawn = game::LocalPawn();
     if (!list || !local_pawn) return;
@@ -49,9 +54,22 @@ void UpdateHitmarker() {
 
         int prev = s_prev_hp[i];
         if (prev > 0 && hp < prev) {
-            std::lock_guard<std::mutex> lock(g_hitmarks_mtx);
-            g_hitmarks.push_back({HitPosition(local_pawn, pawn), prev - hp, std::chrono::steady_clock::now()});
-            if (g_hitmarks.size() > 16) g_hitmarks.erase(g_hitmarks.begin());
+            if (hp == 0 || !settings::Enabled(cfg->hit_sound_kills_only)) hitsound::Play(sound, cfg->hit_sound_volume, hp == 0);
+            if (notices) {
+                std::string name = "enemy";
+                {
+                    std::lock_guard<std::mutex> lock(g_hud.esp_mtx);
+                    for (const EspEntry& entry : g_hud.esp_players)
+                        if (entry.pawn == pawn && entry.name[0]) name = entry.name;
+                }
+                if (hp == 0) PushNotice("Killed " + name, NoticeKind::Kill);
+                else PushNotice("Hit " + name + " for " + std::to_string(prev - hp) + " (" + std::to_string(hp) + " hp left)", NoticeKind::Hit);
+            }
+            if (markers) {
+                std::lock_guard<std::mutex> lock(g_hitmarks_mtx);
+                g_hitmarks.push_back({HitPosition(local_pawn, pawn), prev - hp, std::chrono::steady_clock::now()});
+                if (g_hitmarks.size() > 16) g_hitmarks.erase(g_hitmarks.begin());
+            }
         }
         s_prev_hp[i] = hp;
     }

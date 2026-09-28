@@ -1,4 +1,7 @@
 #include "config/settings.h"
+#include "features/hit_sound.h"
+#include "render/esp_icons.h"
+#include "state.h"
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
 #include <X11/Xlib.h>
@@ -15,6 +18,10 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <array>
+#include <fstream>
+#include <locale>
+#include <cctype>
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -31,10 +38,24 @@ struct SwitchBinding { GtkSwitch* sw; uint32_t* field; };
 static std::vector<SwitchBinding> g_switches;
 struct ColorBinding { GtkColorChooser* chooser; uint32_t* field; };
 struct SliderBinding { GtkRange* range; int32_t* field; double scale; };
+struct CheckBinding { GtkToggleButton* check; uint32_t* field; GtkWidget* dependent; };
+static std::vector<CheckBinding> g_checks;
 static std::vector<ColorBinding> g_colors;
 static std::vector<SliderBinding> g_sliders;
 static std::vector<BindCtx*> g_bind_buttons;
 static bool g_capturing_bind = false;
+struct SearchRow { GtkWidget* row; std::string text; };
+static std::vector<SearchRow> g_search_rows;
+static GtkWidget* g_search_entry = nullptr;
+
+static std::string Lowercase(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return std::tolower(c); });
+    return text;
+}
+
+static void RegisterSearchRow(GtkWidget* row, const char* label) {
+    g_search_rows.push_back({row, Lowercase(label)});
+}
 
 static void SetBindLabel(GtkButton* btn, uint32_t kv) {
     const char* n = gdk_keyval_name(kv);
@@ -46,8 +67,15 @@ static gboolean SyncWidgetsWithSettings(gpointer) {
         bool enabled = settings::Enabled(*binding.field);
         if (gtk_switch_get_active(binding.sw) != enabled) gtk_switch_set_active(binding.sw, enabled);
     }
-    if (!g_capturing_bind)
-        for (BindCtx* ctx : g_bind_buttons) SetBindLabel(ctx->btn, *ctx->field);
+    if (!g_capturing_bind) {
+        for (BindCtx* ctx : g_bind_buttons) {
+            if (ctx && ctx->btn && ctx->field) {
+                const char* cur = gtk_button_get_label(ctx->btn);
+                if (cur && std::string(cur) == "…") continue;
+                SetBindLabel(ctx->btn, *ctx->field);
+            }
+        }
+    }
     for (const ColorBinding& binding : g_colors) {
         GdkRGBA shown;
         gtk_color_chooser_get_rgba(binding.chooser, &shown);
@@ -56,6 +84,11 @@ static gboolean SyncWidgetsWithSettings(gpointer) {
         if (std::fabs(shown.red - wanted.red) + std::fabs(shown.green - wanted.green) + std::fabs(shown.blue - wanted.blue) +
             std::fabs(shown.alpha - wanted.alpha) > 0.01)
             gtk_color_chooser_set_rgba(binding.chooser, &wanted);
+    }
+    for (const CheckBinding& binding : g_checks) {
+        bool enabled = settings::Enabled(*binding.field);
+        if (gtk_toggle_button_get_active(binding.check) != enabled) gtk_toggle_button_set_active(binding.check, enabled);
+        if (binding.dependent && gtk_widget_get_sensitive(binding.dependent) != enabled) gtk_widget_set_sensitive(binding.dependent, enabled);
     }
     for (const SliderBinding& binding : g_sliders) {
         double wanted = *binding.field / binding.scale;
@@ -74,8 +107,7 @@ static gboolean OnBindKey(GtkWidget* w, GdkEventKey* e, gpointer d) {
         kv = gdk_keyval_to_lower(base_layout_kv);
     if (kv == GDK_KEY_Escape) kv = 0;
     *b->field = kv;
-    const char* n = gdk_keyval_name(kv);
-    gtk_button_set_label(b->btn, kv ? (n ? n : "?") : "None");
+    SetBindLabel(b->btn, kv);
     g_signal_handlers_disconnect_by_func(w, (gpointer)OnBindKey, d);
     g_capturing_bind = false;
     return TRUE;
@@ -122,6 +154,7 @@ static GtkWidget* MakeRow(const char* label, uint32_t* toggle, uint32_t* bind_fi
         gtk_box_pack_start(GTK_BOX(row), sw, FALSE, FALSE, 0);
         g_switches.push_back({GTK_SWITCH(sw), toggle});
     }
+    RegisterSearchRow(row, label);
     return row;
 }
 
@@ -142,6 +175,27 @@ static GtkWidget* MakeSliderRow(const char* label, int32_t* field, int min, int 
     g_sliders.push_back({GTK_RANGE(scale), field, 1.0});
     gtk_box_pack_start(GTK_BOX(row), lbl, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(row), scale, TRUE, TRUE, 0);
+    RegisterSearchRow(row, label);
+    return row;
+}
+
+static GtkWidget* MakeCheckSliderRow(const char* label, uint32_t* toggle, int32_t* field, int min, int max, int step) {
+    GtkWidget* row = MakeSliderRow(label, field, min, max, step);
+    GList* children = gtk_container_get_children(GTK_CONTAINER(row));
+    GtkWidget* label_widget = GTK_WIDGET(g_list_nth_data(children, 0));
+    GtkWidget* scale = GTK_WIDGET(g_list_nth_data(children, 1));
+    g_list_free(children);
+    gtk_widget_set_size_request(label_widget, 104, -1);
+    GtkWidget* check = gtk_check_button_new();
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(check), settings::Enabled(*toggle));
+    gtk_widget_set_valign(check, GTK_ALIGN_CENTER);
+    gtk_widget_set_sensitive(scale, settings::Enabled(*toggle));
+    g_signal_connect(check, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer d) {
+        settings::SetEnabled(*static_cast<uint32_t*>(d), gtk_toggle_button_get_active(b));
+    }), toggle);
+    gtk_box_pack_start(GTK_BOX(row), check, FALSE, FALSE, 0);
+    gtk_box_reorder_child(GTK_BOX(row), check, 0);
+    g_checks.push_back({GTK_TOGGLE_BUTTON(check), toggle, scale});
     return row;
 }
 
@@ -166,6 +220,7 @@ static GtkWidget* MakeFovSliderRow(const char* label, int32_t* field_x100) {
     g_sliders.push_back({GTK_RANGE(scale), field_x100, 100.0});
     gtk_box_pack_start(GTK_BOX(row), lbl, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(row), scale, TRUE, TRUE, 0);
+    RegisterSearchRow(row, label);
     return row;
 }
 
@@ -186,6 +241,7 @@ static GtkWidget* MakeComboRow(const char* label, uint32_t* field, std::initiali
         if (active >= 0) *static_cast<uint32_t*>(d) = static_cast<uint32_t>(active);
     }), field);
     gtk_box_pack_start(GTK_BOX(row), combo, FALSE, FALSE, 0);
+    RegisterSearchRow(row, label);
     return row;
 }
 
@@ -220,6 +276,7 @@ static GtkWidget* MakeColorRow(const char* label, uint32_t* field) {
     }), field);
 
     gtk_box_pack_start(GTK_BOX(row), btn, FALSE, FALSE, 0);
+    RegisterSearchRow(row, label);
     return row;
 }
 
@@ -240,16 +297,26 @@ static GtkWidget* MakePage() {
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scr), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_hexpand(scr, TRUE);
     gtk_widget_set_vexpand(scr, TRUE);
-    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
-    gtk_style_context_add_class(gtk_widget_get_style_context(box), "page");
-    gtk_widget_set_hexpand(box, TRUE);
-    gtk_container_add(GTK_CONTAINER(scr), box);
-    g_object_set_data(G_OBJECT(scr), "content", box);
+    GtkWidget* columns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
+    gtk_box_set_homogeneous(GTK_BOX(columns), TRUE);
+    gtk_style_context_add_class(gtk_widget_get_style_context(columns), "page");
+    GtkWidget* left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    GtkWidget* right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_box_pack_start(GTK_BOX(columns), left, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(columns), right, TRUE, TRUE, 0);
+    gtk_container_add(GTK_CONTAINER(scr), columns);
+    g_object_set_data(G_OBJECT(scr), "left", left);
+    g_object_set_data(G_OBJECT(scr), "right", right);
     return scr;
 }
 
 static GtkWidget* PageBox(GtkWidget* page) {
-    return GTK_WIDGET(g_object_get_data(G_OBJECT(page), "content"));
+    return GTK_WIDGET(g_object_get_data(G_OBJECT(page), "left"));
+}
+
+static void Place(GtkWidget* page, GtkWidget* card, bool right) {
+    GtkWidget* column = GTK_WIDGET(g_object_get_data(G_OBJECT(page), right ? "right" : "left"));
+    gtk_box_pack_start(GTK_BOX(column), card, FALSE, FALSE, 0);
 }
 
 static GtkWidget* MakeSvgWidget(const char* svg_data, int size = 16) {
@@ -262,22 +329,54 @@ static GtkWidget* MakeSvgWidget(const char* svg_data, int size = 16) {
     return img;
 }
 
-static void AddSidebarItemSvg(GtkWidget* sidebar, const char* svg_data, const char* name, const char* label) {
+struct SidebarItem { GtkWidget* button; std::string prefix; };
+static std::vector<SidebarItem> g_sidebar_items;
+
+static void RefreshSidebarHighlight() {
+    const char* visible = gtk_stack_get_visible_child_name(GTK_STACK(g_stack));
+    std::string current = visible ? visible : "";
+    for (const SidebarItem& item : g_sidebar_items) {
+        GtkStyleContext* style = gtk_widget_get_style_context(item.button);
+        bool active = current == item.prefix;
+        if (active) gtk_style_context_add_class(style, "active");
+        else gtk_style_context_remove_class(style, "active");
+    }
+}
+
+static GtkWidget* SidebarButton(const char* svg_data, const char* label, int icon_size, const char* extra_class) {
     GtkWidget* btn = gtk_button_new();
     gtk_style_context_add_class(gtk_widget_get_style_context(btn), "sidebar-item");
+    if (extra_class) gtk_style_context_add_class(gtk_widget_get_style_context(btn), extra_class);
     GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget* ic = MakeSvgWidget(svg_data, 22);
-    gtk_style_context_add_class(gtk_widget_get_style_context(ic), "sidebar-icon");
+    if (svg_data) {
+        GtkWidget* ic = MakeSvgWidget(svg_data, icon_size);
+        gtk_style_context_add_class(gtk_widget_get_style_context(ic), "sidebar-icon");
+        gtk_box_pack_start(GTK_BOX(row), ic, FALSE, FALSE, 0);
+    }
     GtkWidget* lbl = gtk_label_new(label);
     gtk_label_set_xalign(GTK_LABEL(lbl), 0.f);
     gtk_widget_set_hexpand(lbl, TRUE);
-    gtk_box_pack_start(GTK_BOX(row), ic, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(row), lbl, TRUE, TRUE, 0);
     gtk_container_add(GTK_CONTAINER(btn), row);
-    g_signal_connect(btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer name) {
-        gtk_stack_set_visible_child_name(GTK_STACK(g_stack), (const char*)name);
-    }), (gpointer)name);
+    return btn;
+}
+
+static void ShowPage(GtkButton*, gpointer name) {
+    gtk_stack_set_visible_child_name(GTK_STACK(g_stack), static_cast<const char*>(name));
+}
+
+static void AddSidebarItemSvg(GtkWidget* sidebar, const char* svg_data, const char* name, const char* label) {
+    GtkWidget* btn = SidebarButton(svg_data, label, 22, nullptr);
+    g_signal_connect(btn, "clicked", G_CALLBACK(ShowPage), (gpointer)name);
     gtk_box_pack_start(GTK_BOX(sidebar), btn, FALSE, FALSE, 0);
+    g_sidebar_items.push_back({btn, name});
+}
+
+static void AddSidebarHeader(GtkWidget* sidebar, const char* title) {
+    GtkWidget* label = gtk_label_new(title);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.f);
+    gtk_style_context_add_class(gtk_widget_get_style_context(label), "sidebar-header");
+    gtk_box_pack_start(GTK_BOX(sidebar), label, FALSE, FALSE, 0);
 }
 
 static void ReadSteamProfile(std::string& name, std::string& avatar_path) {
@@ -425,73 +524,275 @@ static GtkWidget* ConfigsWidget() {
     return box;
 }
 
+struct PreviewColor { double r, g, b, a; };
+
+static PreviewColor Unpack(uint32_t rgba) {
+    return {((rgba >> 24) & 0xFF) / 255.0, ((rgba >> 16) & 0xFF) / 255.0, ((rgba >> 8) & 0xFF) / 255.0, (rgba & 0xFF) / 255.0};
+}
+
+static void PreviewText(cairo_t* cr, const char* text, double center_x, double baseline, double size, bool bold,
+                        PreviewColor color) {
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, bold ? CAIRO_FONT_WEIGHT_BOLD : CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_size(cr, size);
+    cairo_text_extents_t extents;
+    cairo_text_extents(cr, text, &extents);
+    cairo_move_to(cr, std::round(center_x - extents.width * 0.5 - extents.x_bearing), std::round(baseline));
+    cairo_text_path(cr, text);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0.8);
+    cairo_set_line_width(cr, 3.0);
+    cairo_stroke_preserve(cr);
+    cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
+    cairo_fill(cr);
+}
+
+struct AgentPreview {
+    cairo_surface_t* color = nullptr;
+    cairo_surface_t* shade = nullptr;
+    double width = 0, height = 0;
+    double bounds[4]{};
+    double head[2]{};
+    std::vector<std::array<double, 4>> bones;
+    bool loaded = false;
+};
+
+static const AgentPreview& Agent() {
+    static AgentPreview agent = [] {
+        AgentPreview result;
+        const char* home = getenv("HOME");
+        std::string dir = std::string(home ? home : "/tmp") + "/.config/spaxer/preview/";
+        result.color = cairo_image_surface_create_from_png((dir + "agent.png").c_str());
+        result.shade = cairo_image_surface_create_from_png((dir + "agent_shade.png").c_str());
+        std::ifstream meta(dir + "agent.txt");
+        meta.imbue(std::locale::classic());
+        std::string key;
+        while (meta >> key) {
+            if (key == "size") meta >> result.width >> result.height;
+            else if (key == "bounds") meta >> result.bounds[0] >> result.bounds[1] >> result.bounds[2] >> result.bounds[3];
+            else if (key == "head") meta >> result.head[0] >> result.head[1];
+            else if (key == "bone") {
+                std::array<double, 4> bone{};
+                meta >> bone[0] >> bone[1] >> bone[2] >> bone[3];
+                result.bones.push_back(bone);
+            }
+        }
+        result.loaded = cairo_surface_status(result.color) == CAIRO_STATUS_SUCCESS &&
+                        cairo_surface_status(result.shade) == CAIRO_STATUS_SUCCESS && result.width > 0;
+        return result;
+    }();
+    return agent;
+}
+
+static void PaintTinted(cairo_t* cr, cairo_surface_t* mask, PreviewColor color, double alpha) {
+    cairo_set_source_rgba(cr, color.r, color.g, color.b, alpha);
+    cairo_mask_surface(cr, mask, 0, 0);
+}
+
+static gboolean DrawEspPreview(GtkWidget* area, cairo_t* cr, gpointer) {
+    double w = gtk_widget_get_allocated_width(area), h = gtk_widget_get_allocated_height(area);
+    cairo_pattern_t* bg = cairo_pattern_create_linear(0, 0, 0, h);
+    cairo_pattern_add_color_stop_rgb(bg, 0, 0.16, 0.17, 0.21);
+    cairo_pattern_add_color_stop_rgb(bg, 0.8, 0.1, 0.1, 0.13);
+    cairo_pattern_add_color_stop_rgb(bg, 1, 0.07, 0.07, 0.09);
+    cairo_set_source(cr, bg);
+    cairo_paint(cr);
+    cairo_pattern_destroy(bg);
+
+    const AgentPreview& agent = Agent();
+    if (!agent.loaded) {
+        PreviewText(cr, "Run tools/preview_model.py", w * 0.5, h * 0.5, 12, false, {0.7, 0.72, 0.78, 1});
+        return FALSE;
+    }
+    double scale = std::min(w * 0.72 / agent.width, h * 0.86 / agent.height);
+    double ox = w * 0.5 - agent.width * scale * 0.5, oy = h * 0.075;
+    auto X = [&](double x) { return ox + x * scale; };
+    auto Y = [&](double y) { return oy + y * scale; };
+
+    cairo_save(cr);
+    cairo_translate(cr, X((agent.bounds[0] + agent.bounds[2]) * 0.5), Y(agent.bounds[3]));
+    cairo_scale(cr, 1.0, 0.18);
+    cairo_arc(cr, 0, 0, (agent.bounds[2] - agent.bounds[0]) * scale * 0.42, 0, 2 * M_PI);
+    cairo_restore(cr);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0.45);
+    cairo_fill(cr);
+
+    cairo_save(cr);
+    cairo_translate(cr, ox, oy);
+    cairo_scale(cr, scale, scale);
+    if (settings::Enabled(g_cfg->glow)) {
+        PreviewColor glow = Unpack(g_cfg->glow_enemy_rgba);
+        for (double radius : {9.0, 6.0, 3.0})
+            for (int step = 0; step < 12; step++) {
+                double angle = step * M_PI / 6;
+                cairo_save(cr);
+                cairo_translate(cr, std::cos(angle) * radius, std::sin(angle) * radius);
+                PaintTinted(cr, agent.shade, glow, 0.07);
+                cairo_restore(cr);
+            }
+    }
+    if (settings::Enabled(g_cfg->chams)) {
+        PreviewColor chams = Unpack(g_cfg->chams_visible_rgba);
+        cairo_push_group(cr);
+        cairo_set_source_surface(cr, agent.shade, 0, 0);
+        cairo_paint(cr);
+        cairo_set_operator(cr, CAIRO_OPERATOR_MULTIPLY);
+        PaintTinted(cr, agent.shade, chams, 1.0);
+        cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+        cairo_pop_group_to_source(cr);
+        cairo_paint_with_alpha(cr, std::max(0.55, chams.a));
+    } else {
+        cairo_set_source_surface(cr, agent.color, 0, 0);
+        cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
+        cairo_paint(cr);
+    }
+    cairo_restore(cr);
+
+    if (!settings::Enabled(g_cfg->esp)) return FALSE;
+    double left = X(agent.bounds[0]) - 4, right = X(agent.bounds[2]) + 4;
+    double top = Y(agent.bounds[1]) - 4, bottom = Y(agent.bounds[3]) + 2;
+    if (settings::Enabled(g_cfg->esp_skeleton)) {
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.92);
+        cairo_set_line_width(cr, 1.5);
+        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+        for (const auto& bone : agent.bones) {
+            cairo_move_to(cr, X(bone[0]), Y(bone[1]));
+            cairo_line_to(cr, X(bone[2]), Y(bone[3]));
+        }
+        cairo_stroke(cr);
+    }
+    if (settings::Enabled(g_cfg->esp_head_circle)) {
+        cairo_arc(cr, X(agent.head[0]), Y(agent.head[1]), 0.07 * (bottom - top) * 0.5, 0, 2 * M_PI);
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.92);
+        cairo_set_line_width(cr, 1.5);
+        cairo_stroke(cr);
+    }
+    if (settings::Enabled(g_cfg->esp_box)) {
+        for (int pass = 0; pass < 2; pass++) {
+            cairo_rectangle(cr, std::round(left) + 0.5, std::round(top) + 0.5, std::round(right - left), std::round(bottom - top));
+            if (pass == 0) { cairo_set_source_rgba(cr, 0, 0, 0, 0.75); cairo_set_line_width(cr, 3.0); }
+            else { cairo_set_source_rgba(cr, 1, 1, 1, 0.95); cairo_set_line_width(cr, 1.0); }
+            cairo_stroke(cr);
+        }
+    }
+    if (settings::Enabled(g_cfg->esp_health)) {
+        double bar_x = std::round(left) - 6, bar_h = bottom - top, fill = bar_h * 0.76;
+        cairo_rectangle(cr, bar_x - 1, top - 1, 5, bar_h + 2);
+        cairo_set_source_rgba(cr, 0, 0, 0, 0.75);
+        cairo_fill(cr);
+        cairo_pattern_t* hp = cairo_pattern_create_linear(0, bottom - fill, 0, bottom);
+        cairo_pattern_add_color_stop_rgb(hp, 0, 0.45, 0.95, 0.4);
+        cairo_pattern_add_color_stop_rgb(hp, 1, 0.12, 0.62, 0.3);
+        cairo_set_source(cr, hp);
+        cairo_rectangle(cr, bar_x, bottom - fill, 3, fill);
+        cairo_fill(cr);
+        cairo_pattern_destroy(hp);
+        PreviewText(cr, "76", bar_x + 1.5, bottom - fill + 3.0, 9.0, true, {1, 1, 1, 1});
+    }
+    if (settings::Enabled(g_cfg->esp_name)) PreviewText(cr, "Enemy", (left + right) * 0.5, top - 6, 12, true, {1, 1, 1, 1});
+    double below = bottom;
+    bool ammo = settings::Enabled(g_cfg->esp_ammo);
+    if (ammo) {
+        cairo_rectangle(cr, left - 1, bottom + 3, right - left + 2, 5);
+        cairo_set_source_rgba(cr, 0, 0, 0, 0.75);
+        cairo_fill(cr);
+        cairo_rectangle(cr, left, bottom + 4, (right - left) * 22.0 / 30.0, 3);
+        cairo_set_source_rgba(cr, 0.3, 0.55, 1.0, 1);
+        cairo_fill(cr);
+        below = bottom + 8;
+    }
+    if (settings::Enabled(g_cfg->esp_weapon))
+        PreviewText(cr, ammo ? "AK-47  22/30" : "AK-47", (left + right) * 0.5, below + 12, 10, false, {0.85, 0.87, 0.9, 1});
+    if (settings::Enabled(g_cfg->esp_flags))
+        icons::DrawFlagColumn(cr, kFlagHelmet | kFlagBomb | kFlagFlashed | kFlagScoped, right + 5, top, 16, 1.0);
+    return FALSE;
+}
+
+static GtkWidget* MakeEspPreview() {
+    GtkWidget* card = MakeCard("PREVIEW");
+    GtkWidget* area = gtk_drawing_area_new();
+    gtk_widget_set_size_request(area, -1, 400);
+    gtk_style_context_add_class(gtk_widget_get_style_context(area), "preview");
+    g_signal_connect(area, "draw", G_CALLBACK(DrawEspPreview), nullptr);
+    g_timeout_add(50, +[](gpointer widget) -> gboolean {
+        if (gtk_widget_get_mapped(GTK_WIDGET(widget))) gtk_widget_queue_draw(GTK_WIDGET(widget));
+        return G_SOURCE_CONTINUE;
+    }, area);
+    gtk_box_pack_start(GTK_BOX(card), area, FALSE, FALSE, 0);
+    return card;
+}
+
 static void InstallCss() {
     const char* css =
-        "* { font-family: -apple-system, 'SF Pro Text', 'SF Pro Display', 'Inter', 'Helvetica Neue', sans-serif; font-size: 13px; }"
+        "* { font-family: 'Inter', 'SF Pro Text', 'Segoe UI', sans-serif; font-size: 12px; }"
         "window { background: transparent; }"
-        "#root { background: rgba(30, 30, 34, 0.75); border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); }"
-        "#titlebar { background: transparent; padding: 12px 14px 6px 14px; }"
-        "#titlebar label { color: #d1d1d6; font-weight: 600; font-size: 12px; }"
+        "#root { background: #0b0c11; border-radius: 10px; border: 1px solid #1d2029; }"
+        "#titlebar { background: #0e0f15; border-bottom: 1px solid #1a1c25; border-radius: 10px 10px 0 0; padding: 10px 12px 10px 18px; }"
+        ".logo { font-size: 15px; font-weight: 800; letter-spacing: 2px; }"
+        "#search { background: #0b0c11; color: #e4e6ed; border: 1px solid #1d2029; border-radius: 6px; min-height: 26px; padding: 0 8px; margin-left: 16px; }"
+        "#search:focus { border-color: #4c8dff; }"
+        ".close-button { background: transparent; color: #5c6070; border: none; box-shadow: none; padding: 2px 8px; font-size: 13px; }"
+        ".close-button:hover { color: #ffffff; background: #1a1d27; }"
 
-        ".traffic { min-width: 14px; min-height: 14px; padding: 0; margin: 0 4px; border: none; border-radius: 50%; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.35); }"
-        ".traffic.close  { background: #ff5f57; }"
-        ".traffic.close:hover  { background: #ff746e; }"
-        ".traffic.hide   { background: #28c840; }"
-        ".traffic.hide:hover   { background: #4dd865; }"
+        "#sidebar { background: #0e0f15; border-right: 1px solid #1a1c25; padding: 8px 10px 10px 10px; border-radius: 0 0 0 10px; }"
+        ".sidebar-header { color: #4a4e5c; font-size: 10px; font-weight: 800; letter-spacing: 1.4px; margin: 14px 10px 4px 10px; }"
+        ".sidebar-item { background: transparent; color: #9a9eab; border: none; border-radius: 6px; padding: 7px 10px; margin: 1px 0; box-shadow: none; font-size: 13px; font-weight: 600; }"
+        ".sidebar-item:hover { background: #141620; color: #e4e6ed; }"
+        ".sidebar-item.active { background: linear-gradient(90deg, rgba(76,141,255,0.16), rgba(76,141,255,0.02)); color: #ffffff; box-shadow: inset 2px 0 0 #4c8dff; }"
+        ".sidebar-icon { min-width: 18px; margin-right: 2px; }"
 
-        "#sidebar { background: rgba(20, 20, 22, 0.35); border-right: 1px solid rgba(255,255,255,0.06); padding: 12px 8px; }"
-        ".sidebar-item { background: transparent; color: #e5e5ea; border: none; border-radius: 8px; padding: 7px 10px; margin: 2px 4px; box-shadow: none; font-size: 14px; font-weight: 500; }"
-        ".sidebar-item:hover { background: rgba(255,255,255,0.06); }"
-        ".sidebar-item:active { background: rgba(255,255,255,0.14); color: #ffffff; }"
-        ".sidebar-icon { min-width: 22px; }"
+        ".configs { padding: 10px; margin: 8px 0; background: #11131a; border-radius: 8px; border: 1px solid #1c1f29; }"
+        ".configs-title { color: #4a4e5c; font-size: 10px; font-weight: 800; letter-spacing: 1.4px; margin-bottom: 4px; }"
+        ".configs entry { min-height: 26px; padding: 4px 10px; font-size: 11px; background: #0b0c11; color: #e4e6ed; border-radius: 6px; border: 1px solid #1d2029; }"
+        ".configs button { min-height: 26px; padding: 4px 10px; font-size: 11px; }"
+        ".configs combobox box { background: #0b0c11; border-radius: 6px; border: 1px solid #1d2029; }"
+        ".configs combobox button { min-height: 26px; padding: 4px 10px; background: transparent; border: none; box-shadow: none; }"
+        "combobox window menu { background: #11131a; border-radius: 6px; padding: 4px; border: 1px solid #1d2029; }"
+        "combobox window menu menuitem { color: #e4e6ed; border-radius: 4px; padding: 6px 10px; }"
+        "combobox window menu menuitem:hover { background: #4c8dff; color: white; }"
 
-        ".configs { padding: 8px 10px; margin: 8px 4px; background: rgba(255,255,255,0.04); border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); }"
-        ".configs-title { color: #8e8e93; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin-bottom: 2px; }"
-        ".configs entry { min-height: 24px; padding: 4px 10px; font-size: 11px; background: rgba(0,0,0,0.35); border-radius: 8px; }"
-        ".configs button { min-height: 24px; padding: 4px 10px; font-size: 11px; background: rgba(120,120,128,0.24); border-radius: 8px; }"
-        ".configs button:hover { background: rgba(120,120,128,0.38); }"
-        ".configs combobox { background: transparent; }"
-        ".configs combobox box { background: rgba(0,0,0,0.35); border-radius: 8px; padding: 0; border: none; }"
-        ".configs combobox button { min-height: 24px; padding: 4px 10px; font-size: 11px; background: transparent; box-shadow: none; border: none; }"
-        ".configs combobox arrow { color: #8e8e93; min-width: 10px; min-height: 10px; padding-right: 6px; }"
-        ".configs combobox window menu { background: rgba(40,40,45,0.98); border-radius: 8px; padding: 4px; border: 1px solid rgba(255,255,255,0.08); }"
-        ".configs combobox window menu menuitem { color: #f2f2f7; border-radius: 6px; padding: 6px 10px; }"
-        ".configs combobox window menu menuitem:hover { background: #007aff; color: white; }"
-
-        ".profile { padding: 10px 12px; margin: 6px 4px 4px 4px; background: rgba(255,255,255,0.06); border-radius: 10px; border: 1px solid rgba(255,255,255,0.06); }"
-        ".profile .avatar { border-radius: 18px; background-color: rgba(0,0,0,0.3); }"
-        ".profile-name { color: #ffffff; font-weight: 600; font-size: 12px; }"
-        ".profile-sub  { color: #8e8e93; font-size: 10px; }"
+        ".profile { padding: 8px 10px; margin: 4px 0 0 0; background: #11131a; border-radius: 8px; border: 1px solid #1c1f29; }"
+        ".profile .avatar { border-radius: 16px; }"
+        ".profile-name { color: #ffffff; font-weight: 700; font-size: 12px; }"
+        ".profile-sub  { color: #4c8dff; font-size: 10px; font-weight: 600; }"
 
         "stack { background: transparent; }"
-        ".page { padding: 18px 24px 24px 24px; }"
+        ".page { padding: 14px 16px 18px 16px; }"
+        ".card { background: #11131a; border-radius: 8px; border: 1px solid #1c1f29; }"
+        ".card-title { color: #e4e6ed; font-size: 11px; font-weight: 800; letter-spacing: 1px; padding: 10px 14px 9px 14px; border-bottom: 1px solid #1a1c25; margin-bottom: 4px; }"
+        ".preview { margin: 6px 10px 10px 10px; border-radius: 6px; }"
+        ".row { padding: 6px 14px; }"
+        ".row:hover { background: #141620; }"
+        ".row label { color: #c9ccd6; font-size: 12px; }"
 
-        ".card { background: rgba(255,255,255,0.06); border-radius: 10px; border: 1px solid rgba(255,255,255,0.05); }"
-        ".card-title { color: #8e8e93; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin: 10px 14px 6px 14px; }"
+        "checkbutton { padding: 0; min-height: 0; }"
+        "checkbutton check { min-width: 14px; min-height: 14px; margin: 0; border-radius: 4px; background: #1d2030; border: 1px solid #2c3142; color: transparent; }"
+        "checkbutton check:checked { background: #4c8dff; border-color: #4c8dff; color: #ffffff; -gtk-icon-source: -gtk-icontheme('object-select-symbolic'); }"
+        "scale:disabled { opacity: 0.4; }"
+        "switch { min-width: 34px; min-height: 18px; background: #1d2030; border-radius: 9px; border: 1px solid #262a3a; padding: 0; }"
+        "switch:checked { background: #4c8dff; border-color: #4c8dff; }"
+        "switch slider { background: #8a8fa0; border-radius: 50%; min-width: 14px; min-height: 14px; margin: 2px; border: none; box-shadow: none; }"
+        "switch:checked slider { background: #ffffff; }"
 
-        ".row { padding: 8px 14px; border-top: 1px solid rgba(255,255,255,0.05); }"
-        ".row:first-child { border-top: none; }"
-        ".row label { color: #ffffff; font-size: 13px; }"
+        "scale { padding: 6px 0; }"
+        "scale trough { background: #1d2030; border-radius: 2px; min-height: 4px; border: none; }"
+        "scale highlight { background: linear-gradient(90deg, #2f6fe0, #4c8dff); border-radius: 2px; }"
+        "scale slider { background: #ffffff; border-radius: 50%; min-width: 12px; min-height: 12px; margin: -5px; border: 2px solid #4c8dff; box-shadow: none; }"
+        "scale value { color: #4c8dff; font-size: 11px; font-weight: 700; margin-left: 6px; }"
 
-        "switch { min-width: 44px; min-height: 26px; background: rgba(120,120,128,0.32); border-radius: 13px; border: none; padding: 0; }"
-        "switch:checked { background: #34c759; }"
-        "switch slider { background: white; border-radius: 50%; min-width: 22px; min-height: 22px; margin: 2px; box-shadow: 0 2px 4px rgba(0,0,0,0.35); border: none; }"
-
-        "scale { padding: 8px 0; }"
-        "scale trough { background: rgba(120,120,128,0.32); border-radius: 3px; min-height: 4px; border: none; }"
-        "scale highlight { background: #007aff; border-radius: 3px; }"
-        "scale slider { background: white; border-radius: 50%; min-width: 20px; min-height: 20px; margin: -8px; box-shadow: 0 1px 3px rgba(0,0,0,0.35); border: none; }"
-        "scale value { color: #8e8e93; font-size: 11px; margin-left: 6px; }"
-
-        "button { background: rgba(120,120,128,0.24); color: #ffffff; border: none; border-radius: 6px; padding: 4px 10px; font-weight: 500; font-size: 11px; }"
-        "button:hover { background: rgba(120,120,128,0.36); }"
-        "button:active { background: rgba(0,122,255,0.7); }"
-        ".bind { background: rgba(0,122,255,0.18); color: #5ac8fa; font-family: monospace; }"
-        ".bind:hover { background: rgba(0,122,255,0.32); color: #ffffff; }"
+        "button { background: #171a24; color: #e4e6ed; border: 1px solid #232736; border-radius: 6px; padding: 4px 10px; font-weight: 600; font-size: 11px; box-shadow: none; }"
+        "button:hover { background: #1d2130; border-color: #2d3346; }"
+        "button:active { background: #4c8dff; border-color: #4c8dff; }"
+        ".bind-badge { background: rgba(76, 141, 255, 0.12); color: #7fa7ff; border: 1px solid rgba(76, 141, 255, 0.28); border-radius: 4px; padding: 2px 7px; font-family: monospace; font-size: 10px; font-weight: 700; margin-right: 4px; }"
+        ".bind-badge:hover { background: rgba(76, 141, 255, 0.24); color: #ffffff; }"
+        ".bind-badge.capturing { background: rgba(255, 159, 10, 0.22); color: #ff9f0a; border-color: #ff9f0a; }"
+        "menu { background: #11131a; border-radius: 6px; padding: 4px; border: 1px solid #1d2029; }"
+        "menu menuitem { color: #e4e6ed; border-radius: 4px; padding: 5px 12px; font-size: 11px; }"
+        "menu menuitem:hover { background: #4c8dff; color: white; }"
+        ".color-btn { padding: 2px; border-radius: 5px; background: #171a24; }"
+        "combobox button { background: #171a24; border: 1px solid #232736; }"
 
         "scrollbar { background: transparent; }"
-        "scrollbar slider { background: rgba(255,255,255,0.24); border-radius: 3px; min-width: 6px; min-height: 30px; }"
-        "scrollbar slider:hover { background: rgba(255,255,255,0.4); }";
+        "scrollbar slider { background: #232736; border-radius: 3px; min-width: 5px; min-height: 30px; }"
+        "scrollbar slider:hover { background: #4c8dff; }";
 
     GtkCssProvider* p = gtk_css_provider_new();
     gtk_css_provider_load_from_data(p, css, -1, nullptr);
@@ -500,50 +801,129 @@ static void InstallCss() {
     g_object_unref(p);
 }
 
+static const char* CardTitle(GtkWidget* card) {
+    GList* children = gtk_container_get_children(GTK_CONTAINER(card));
+    const char* title = children && GTK_IS_LABEL(children->data) ? gtk_label_get_text(GTK_LABEL(children->data)) : "";
+    g_list_free(children);
+    return title;
+}
+
+struct CardHome { GtkWidget* card; GtkWidget* parent; int position; };
+static std::vector<CardHome> g_card_homes;
+static GtkWidget* g_search_page = nullptr;
+static std::string g_page_before_search;
+
+static void MoveCard(GtkWidget* card, GtkWidget* target) {
+    g_object_ref(card);
+    gtk_container_remove(GTK_CONTAINER(gtk_widget_get_parent(card)), card);
+    gtk_box_pack_start(GTK_BOX(target), card, FALSE, FALSE, 0);
+    g_object_unref(card);
+}
+
+static void RestoreCards() {
+    std::vector<CardHome> homes = g_card_homes;
+    std::sort(homes.begin(), homes.end(), [](const CardHome& l, const CardHome& r) { return l.position < r.position; });
+    for (const CardHome& home : homes) {
+        if (gtk_widget_get_parent(home.card) != home.parent) MoveCard(home.card, home.parent);
+        gtk_box_reorder_child(GTK_BOX(home.parent), home.card, home.position);
+    }
+    g_card_homes.clear();
+}
+
+static void ApplySearch(const std::string& raw) {
+    std::string query = Lowercase(raw);
+    bool searching = !query.empty();
+    const char* visible = gtk_stack_get_visible_child_name(GTK_STACK(g_stack));
+    if (searching && g_card_homes.empty() && visible && std::string(visible) != "search") g_page_before_search = visible;
+    RestoreCards();
+    for (const SearchRow& entry : g_search_rows) gtk_widget_set_visible(entry.row, TRUE);
+    if (!searching) {
+        if (!g_page_before_search.empty()) gtk_stack_set_visible_child_name(GTK_STACK(g_stack), g_page_before_search.c_str());
+        return;
+    }
+    std::vector<GtkWidget*> cards;
+    for (const SearchRow& entry : g_search_rows) {
+        GtkWidget* card = gtk_widget_get_parent(entry.row);
+        if (std::find(cards.begin(), cards.end(), card) == cards.end()) cards.push_back(card);
+    }
+    GtkWidget* columns[2] = {GTK_WIDGET(g_object_get_data(G_OBJECT(g_search_page), "left")),
+                             GTK_WIDGET(g_object_get_data(G_OBJECT(g_search_page), "right"))};
+    int placed = 0;
+    for (GtkWidget* card : cards) {
+        bool card_match = Lowercase(CardTitle(card)).find(query) != std::string::npos;
+        bool any = false;
+        for (const SearchRow& entry : g_search_rows) {
+            if (gtk_widget_get_parent(entry.row) != card) continue;
+            bool show = card_match || entry.text.find(query) != std::string::npos;
+            gtk_widget_set_visible(entry.row, show);
+            any = any || show;
+        }
+        if (!any) continue;
+        GtkWidget* parent = gtk_widget_get_parent(card);
+        int position = 0;
+        gtk_container_child_get(GTK_CONTAINER(parent), card, "position", &position, nullptr);
+        g_card_homes.push_back({card, parent, position});
+        MoveCard(card, columns[placed++ % 2]);
+    }
+    gtk_widget_show_all(g_search_page);
+    for (const SearchRow& entry : g_search_rows) {
+        GtkWidget* card = gtk_widget_get_parent(entry.row);
+        bool in_results = std::any_of(g_card_homes.begin(), g_card_homes.end(), [&](const CardHome& h) { return h.card == card; });
+        if (!in_results) continue;
+        bool card_match = Lowercase(CardTitle(card)).find(query) != std::string::npos;
+        gtk_widget_set_visible(entry.row, card_match || entry.text.find(query) != std::string::npos);
+    }
+    gtk_stack_set_visible_child_name(GTK_STACK(g_stack), "search");
+}
+
 static GtkWidget* Titlebar() {
-    GtkWidget* bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget* bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_set_name(bar, "titlebar");
-    GtkWidget* close = gtk_button_new();
-    gtk_style_context_add_class(gtk_widget_get_style_context(close), "traffic");
-    gtk_style_context_add_class(gtk_widget_get_style_context(close), "close");
+    GtkWidget* logo = gtk_label_new(nullptr);
+    gtk_label_set_markup(GTK_LABEL(logo), "<span foreground=\"#4c8dff\">SPAXER</span><span foreground=\"#5c6070\">.CS2</span>");
+    gtk_style_context_add_class(gtk_widget_get_style_context(logo), "logo");
+    gtk_widget_set_size_request(logo, 230, -1);
+    gtk_label_set_xalign(GTK_LABEL(logo), 0.f);
+    GtkWidget* spacer = gtk_search_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(spacer), "Search settings...");
+    gtk_widget_set_name(spacer, "search");
+    g_search_entry = spacer;
+    gtk_widget_set_size_request(spacer, 320, -1);
+    gtk_widget_set_halign(spacer, GTK_ALIGN_START);
+    g_signal_connect(spacer, "search-changed", G_CALLBACK(+[](GtkSearchEntry* entry, gpointer) {
+        ApplySearch(gtk_entry_get_text(GTK_ENTRY(entry)));
+    }), nullptr);
+    GtkWidget* close = gtk_button_new_with_label("\u2715");
+    gtk_style_context_add_class(gtk_widget_get_style_context(close), "close-button");
     g_signal_connect(close, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) { gtk_widget_hide(g_win); }), nullptr);
-    GtkWidget* hide = gtk_button_new();
-    gtk_style_context_add_class(gtk_widget_get_style_context(hide), "traffic");
-    gtk_style_context_add_class(gtk_widget_get_style_context(hide), "hide");
-    g_signal_connect(hide, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) { gtk_widget_hide(g_win); }), nullptr);
-    GtkWidget* title = gtk_label_new("spaxer");
-    gtk_widget_set_hexpand(title, TRUE);
-    gtk_label_set_xalign(GTK_LABEL(title), 0.5f);
-    gtk_box_pack_start(GTK_BOX(bar), close, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(bar), hide, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(bar), title, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(bar), logo, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(bar), spacer, TRUE, TRUE, 0);
+    gtk_box_pack_end(GTK_BOX(bar), close, FALSE, FALSE, 0);
     return bar;
 }
 
-static std::string ColoredIconSvg(const char* color, const char* glyph) {
-    return std::string("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">"
-                       "<defs><linearGradient id=\"g\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">"
-                       "<stop offset=\"0\" stop-color=\"#ffffff\" stop-opacity=\"0.28\"/>"
-                       "<stop offset=\"1\" stop-color=\"#000000\" stop-opacity=\"0.12\"/></linearGradient></defs>"
-                       "<rect width=\"24\" height=\"24\" rx=\"6\" fill=\"") + color + "\"/>"
-           "<rect width=\"24\" height=\"24\" rx=\"6\" fill=\"url(#g)\"/>"
-           "<g transform=\"translate(5 5) scale(0.5833)\" fill=\"none\" stroke=\"#ffffff\" stroke-width=\"2.4\" "
-           "stroke-linecap=\"round\" stroke-linejoin=\"round\">" + glyph + "</g></svg>";
+static std::string LineIconSvg(const char* glyph) {
+    return std::string("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#4c8dff\" "
+                       "stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">") + glyph + "</g></svg>";
 }
 
-static const char* kGlyphCrosshair = "<circle cx=\"12\" cy=\"12\" r=\"7\"/><line x1=\"12\" y1=\"1\" x2=\"12\" y2=\"6\"/><line x1=\"12\" y1=\"18\" x2=\"12\" y2=\"23\"/><line x1=\"1\" y1=\"12\" x2=\"6\" y2=\"12\"/><line x1=\"18\" y1=\"12\" x2=\"23\" y2=\"12\"/><circle cx=\"12\" cy=\"12\" r=\"1\" fill=\"#ffffff\"/>";
-static const char* kGlyphMovement = "<polyline points=\"3 17 9 11 13 15 21 7\"/><polyline points=\"15 7 21 7 21 13\"/>";
-static const char* kGlyphRender = "<path d=\"M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/>";
+static const char* kGlyphCrosshair = "<circle cx=\"12\" cy=\"12\" r=\"8\"/><line x1=\"12\" y1=\"1.5\" x2=\"12\" y2=\"6\"/><line x1=\"12\" y1=\"18\" x2=\"12\" y2=\"22.5\"/><line x1=\"1.5\" y1=\"12\" x2=\"6\" y2=\"12\"/><line x1=\"18\" y1=\"12\" x2=\"22.5\" y2=\"12\"/><circle cx=\"12\" cy=\"12\" r=\"1.2\"/>";
+static const char* kGlyphMovement = "<polyline points=\"5 9 2 12 5 15\"/><polyline points=\"9 5 12 2 15 5\"/><polyline points=\"15 19 12 22 9 19\"/><polyline points=\"19 9 22 12 19 15\"/><line x1=\"2\" y1=\"12\" x2=\"22\" y2=\"12\"/><line x1=\"12\" y1=\"2\" x2=\"12\" y2=\"22\"/>";
+static const char* kGlyphEsp = "<circle cx=\"12\" cy=\"7\" r=\"4\"/><path d=\"M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1\"/><rect x=\"2\" y=\"1.5\" width=\"20\" height=\"21\" rx=\"2\" stroke-dasharray=\"3 3\"/>";
+static const char* kGlyphHud = "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\"/><line x1=\"9\" y1=\"21\" x2=\"9\" y2=\"9\"/>";
+static const char* kGlyphWorld = "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"2\" y1=\"12\" x2=\"22\" y2=\"12\"/><path d=\"M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\"/>";
 static const char* kGlyphMisc = "<line x1=\"4\" y1=\"21\" x2=\"4\" y2=\"14\"/><line x1=\"4\" y1=\"10\" x2=\"4\" y2=\"3\"/><line x1=\"12\" y1=\"21\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"3\"/><line x1=\"20\" y1=\"21\" x2=\"20\" y2=\"16\"/><line x1=\"20\" y1=\"12\" x2=\"20\" y2=\"3\"/><line x1=\"1\" y1=\"14\" x2=\"7\" y2=\"14\"/><line x1=\"9\" y1=\"8\" x2=\"15\" y2=\"8\"/><line x1=\"17\" y1=\"16\" x2=\"23\" y2=\"16\"/>";
 static const char* kGlyphScripts = "<polyline points=\"16 18 22 12 16 6\"/><polyline points=\"8 6 2 12 8 18\"/><line x1=\"14\" y1=\"4\" x2=\"10\" y2=\"20\"/>";
 static const char* kGlyphFile = "<path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"/><polyline points=\"14 2 14 8 20 8\"/><line x1=\"8\" y1=\"13\" x2=\"16\" y2=\"13\"/><line x1=\"8\" y1=\"17\" x2=\"13\" y2=\"17\"/>";
 
-static const std::string s_svg_legit = ColoredIconSvg("#ff453a", kGlyphCrosshair);
-static const std::string s_svg_movement = ColoredIconSvg("#30d158", kGlyphMovement);
-static const std::string s_svg_render = ColoredIconSvg("#bf5af2", kGlyphRender);
-static const std::string s_svg_misc = ColoredIconSvg("#ff9f0a", kGlyphMisc);
-static const std::string s_svg_scripts = ColoredIconSvg("#0a84ff", kGlyphScripts);
-static const std::string s_svg_lua_file = ColoredIconSvg("#5e5ce6", kGlyphFile);
+static const std::string s_svg_legit = LineIconSvg(kGlyphCrosshair);
+static const std::string s_svg_movement = LineIconSvg(kGlyphMovement);
+static const std::string s_svg_esp = LineIconSvg(kGlyphEsp);
+static const std::string s_svg_hud = LineIconSvg(kGlyphHud);
+static const std::string s_svg_world = LineIconSvg(kGlyphWorld);
+static const std::string s_svg_misc = LineIconSvg(kGlyphMisc);
+static const std::string s_svg_scripts = LineIconSvg(kGlyphScripts);
+static const std::string s_svg_lua_file = LineIconSvg(kGlyphFile);
 
 static std::string ScriptsDir() {
     const char* home = getenv("HOME");
@@ -651,14 +1031,18 @@ static void PopulateScriptsList(GtkBox* target) {
 static GtkWidget* BuildGui() {
     for (BindCtx* ctx : g_bind_buttons) delete ctx;
     g_bind_buttons.clear();
+    g_sidebar_items.clear();
     g_switches.clear();
+    g_search_rows.clear();
+    g_card_homes.clear();
     g_colors.clear();
     g_sliders.clear();
+    g_checks.clear();
     GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(win), "spaxer");
     gtk_window_set_role(GTK_WINDOW(win), "spaxer-gui");
-    gtk_window_set_default_size(GTK_WINDOW(win), 860, 620);
-    gtk_widget_set_size_request(win, 860, 620);
+    gtk_window_set_default_size(GTK_WINDOW(win), 1120, 740);
+    gtk_widget_set_size_request(win, 1120, 740);
     gtk_window_set_resizable(GTK_WINDOW(win), FALSE);
     gtk_window_set_position(GTK_WINDOW(win), GTK_WIN_POS_CENTER_ALWAYS);
     gtk_window_set_decorated(GTK_WINDOW(win), FALSE);
@@ -670,7 +1054,7 @@ static GtkWidget* BuildGui() {
         gtk_widget_hide(g_win); return TRUE;
     }), nullptr);
     g_signal_connect(win, "button-press-event", G_CALLBACK(+[](GtkWidget* w, GdkEventButton* e, gpointer) -> gboolean {
-        if (e->button == 1 && e->y < 44 && e->x > 60) {
+        if (e->button == 1 && e->y < 46) {
             gtk_window_begin_move_drag(GTK_WINDOW(w), e->button, e->x_root, e->y_root, e->time);
             return TRUE;
         }
@@ -689,7 +1073,7 @@ static GtkWidget* BuildGui() {
 
     GtkWidget* sidebar_outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_name(sidebar_outer, "sidebar");
-    gtk_widget_set_size_request(sidebar_outer, 215, -1);
+    gtk_widget_set_size_request(sidebar_outer, 230, -1);
     gtk_box_pack_start(GTK_BOX(body), sidebar_outer, FALSE, TRUE, 0);
     GtkWidget* sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     gtk_box_pack_start(GTK_BOX(sidebar_outer), sidebar, TRUE, TRUE, 0);
@@ -705,7 +1089,6 @@ static GtkWidget* BuildGui() {
 
     {
         GtkWidget* page = MakePage();
-        GtkWidget* box = PageBox(page);
 
         GtkWidget* aim = MakeCard("AIMBOT");
         gtk_box_pack_start(GTK_BOX(aim), MakeRow("Enabled",       &g_cfg->aimbot_enabled,      &g_cfg->bind_aimbot), FALSE, FALSE, 0);
@@ -722,7 +1105,7 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(aim), MakeRow("Neck",   &g_cfg->aimbot_point_neck,   nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(aim), MakeRow("Chest",  &g_cfg->aimbot_point_chest,  nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(aim), MakeRow("Pelvis", &g_cfg->aimbot_point_pelvis, nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), aim, FALSE, FALSE, 0);
+        Place(page, aim, false);
 
         GtkWidget* human = MakeCard("HUMANIZATION");
         gtk_box_pack_start(GTK_BOX(human), MakeRow("Enabled", &g_cfg->aimbot_humanize, nullptr), FALSE, FALSE, 0);
@@ -730,7 +1113,7 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(human), MakeSliderRow("Speed max", &g_cfg->aimbot_speed_max_x100, 1, 100, 1), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(human), MakeSliderRow("Shake", &g_cfg->aimbot_shake_x100, 0, 100, 1), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(human), MakeSliderRow("Release speed", &g_cfg->aimbot_release_x100, 5, 100, 1), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), human, FALSE, FALSE, 0);
+        Place(page, human, true);
 
         GtkWidget* tb = MakeCard("TRIGGER BOT");
         gtk_box_pack_start(GTK_BOX(tb), MakeRow("Enabled",        &g_cfg->trigger_enabled,         &g_cfg->bind_trigger), FALSE, FALSE, 0);
@@ -739,36 +1122,57 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(tb), MakeRow("Flash check",    &g_cfg->trigger_flash_check,     nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeRow("Autowall",       &g_cfg->autowall,                nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeRow("Auto stop",      &g_cfg->trigger_autostop,        nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(tb), MakeSliderRow("Min damage", &g_cfg->autowall_min_damage, 1, 100, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(tb), MakeCheckSliderRow("Min damage", &g_cfg->min_damage_enabled, &g_cfg->autowall_min_damage, 1, 100, 1), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeSliderRow("Hitchance",  &g_cfg->trigger_hitchance, 0, 100, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(tb), MakeRow("Force shot", &g_cfg->trigger_force_shot, &g_cfg->bind_force_shot), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(tb), MakeRow("Min damage override", &g_cfg->trigger_md_override, &g_cfg->bind_md_override), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(tb), MakeSliderRow("Override damage", &g_cfg->md_override_value, 1, 100, 1), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeSliderRow("Delay (ms)", &g_cfg->trigger_delay_ms, 0, 500, 5), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(tb), MakeFovSliderRow("FOV", &g_cfg->trigger_fov_x100), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), tb, FALSE, FALSE, 0);
+        Place(page, tb, true);
 
         GtkWidget* rcs = MakeCard("RCS");
         gtk_box_pack_start(GTK_BOX(rcs), MakeRow("Enabled", &g_cfg->rcs_enabled, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(rcs), MakeSliderRow("Strength", &g_cfg->rcs_strength_x100, 0, 100, 1), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), rcs, FALSE, FALSE, 0);
+        Place(page, rcs, false);
 
         gtk_stack_add_named(GTK_STACK(g_stack), page, "legit");
+        AddSidebarHeader(sidebar, "COMBAT");
         AddSidebarItemSvg(sidebar, s_svg_legit.c_str(), "legit", "Legit bot");
     }
     {
         GtkWidget* page = MakePage();
-        GtkWidget* box = PageBox(page);
-        GtkWidget* c = MakeCard("MOVEMENT");
-        gtk_box_pack_start(GTK_BOX(c), MakeRow("Bunny hop",   &g_cfg->bunnyhop,    &g_cfg->bind_bunnyhop),    FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(c), MakeRow("Auto jump",   &g_cfg->bhop_auto_jump, nullptr),               FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(c), MakeRow("Auto strafe", &g_cfg->auto_strafe, &g_cfg->bind_auto_strafe), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(c), MakeComboRow("Strafe mode", &g_cfg->auto_strafe_mode, {"Follow mouse", "Full auto"}), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), c, FALSE, FALSE, 0);
+        GtkWidget* bhop = MakeCard("BUNNY HOP");
+        gtk_box_pack_start(GTK_BOX(bhop), MakeRow("Enabled", &g_cfg->bunnyhop, &g_cfg->bind_bunnyhop), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(bhop), MakeRow("Auto jump", &g_cfg->bhop_auto_jump, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(bhop), MakeComboRow("Jump method", &g_cfg->bhop_method, {"Space", "Scroll wheel (bind mwheeldown +jump)"}), FALSE, FALSE, 0);
+        Place(page, bhop, false);
+
+        GtkWidget* strafe = MakeCard("AUTO STRAFE");
+        gtk_box_pack_start(GTK_BOX(strafe), MakeRow("Enabled", &g_cfg->auto_strafe, &g_cfg->bind_auto_strafe), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(strafe), MakeComboRow("Strafe mode", &g_cfg->auto_strafe_mode, {"Follow mouse", "Full auto"}), FALSE, FALSE, 0);
+        Place(page, strafe, false);
+
+        GtkWidget* stop = MakeCard("FAST STOP");
+        gtk_box_pack_start(GTK_BOX(stop), MakeRow("Enabled", &g_cfg->fast_stop_enabled, &g_cfg->bind_fast_stop), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(stop), MakeComboRow("Fast stop mode", &g_cfg->fast_stop_mode, {"In air", "Always"}), FALSE, FALSE, 0);
+        Place(page, stop, true);
+
+        GtkWidget* ladder = MakeCard("LADDER");
+        gtk_box_pack_start(GTK_BOX(ladder), MakeRow("Fast ladder", &g_cfg->fast_ladder, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(ladder), MakeRow("Ladder jump assist", &g_cfg->ladder_jump, nullptr), FALSE, FALSE, 0);
+        Place(page, ladder, true);
+
+        GtkWidget* edge = MakeCard("EDGE");
+        gtk_box_pack_start(GTK_BOX(edge), MakeRow("Edge jump", &g_cfg->edge_jump, &g_cfg->bind_edge_jump), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(edge), MakeRow("Edge bug", &g_cfg->edge_bug, &g_cfg->bind_edge_bug), FALSE, FALSE, 0);
+        Place(page, edge, true);
         gtk_stack_add_named(GTK_STACK(g_stack), page, "movement");
+        AddSidebarHeader(sidebar, "MOVEMENT");
         AddSidebarItemSvg(sidebar, s_svg_movement.c_str(), "movement", "Movement");
     }
     {
         GtkWidget* page = MakePage();
-        GtkWidget* box = PageBox(page);
-
         GtkWidget* esp = MakeCard("ESP");
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Enabled",            &g_cfg->esp,                 &g_cfg->bind_esp),     FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Enemies only",       &g_cfg->esp_team_check,      nullptr), FALSE, FALSE, 0);
@@ -776,37 +1180,39 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Health bar",         &g_cfg->esp_health,          nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Name",               &g_cfg->esp_name,            nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Player weapon",      &g_cfg->esp_weapon,          nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(esp), MakeRow("Ammo",               &g_cfg->esp_ammo,            nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Skeleton",           &g_cfg->esp_skeleton,        nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Head circle",        &g_cfg->esp_head_circle,     nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Flags (flashed, bomb, kit…)", &g_cfg->esp_flags, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("My grenade prediction", &g_cfg->grenade_trajectory,  nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(esp), MakeRow("Thrown grenades (all)", &g_cfg->grenade_world,  nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), esp, FALSE, FALSE, 0);
+        Place(page, esp, false);
 
         GtkWidget* sound = MakeCard("SOUND ESP");
         gtk_box_pack_start(GTK_BOX(sound), MakeRow("Enabled", &g_cfg->sound_esp, &g_cfg->bind_sound_esp), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(sound), MakeColorRow("Color", &g_cfg->sound_esp_rgba), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), sound, FALSE, FALSE, 0);
+        Place(page, sound, false);
 
         GtkWidget* weapons = MakeCard("WEAPON ESP");
         gtk_box_pack_start(GTK_BOX(weapons), MakeRow("Enabled", &g_cfg->esp_dropped_weapons, &g_cfg->bind_weapon_esp), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(weapons), MakeSliderRow("Max distance (m)", &g_cfg->weapon_esp_distance_m, 5, 150, 1), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(weapons), MakeColorRow("Color", &g_cfg->weapon_esp_rgba), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), weapons, FALSE, FALSE, 0);
+        Place(page, weapons, false);
 
         GtkWidget* arrows = MakeCard("ARROWS");
         gtk_box_pack_start(GTK_BOX(arrows), MakeRow("Enabled", &g_cfg->arrows, &g_cfg->bind_arrows), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(arrows), MakeSliderRow("Radius", &g_cfg->arrows_radius, 40, 500, 5), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(arrows), MakeSliderRow("Size", &g_cfg->arrows_size, 6, 32, 1), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(arrows), MakeColorRow("Color", &g_cfg->arrows_rgba), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), arrows, FALSE, FALSE, 0);
+        Place(page, arrows, false);
 
+        Place(page, MakeEspPreview(), true);
         GtkWidget* glow = MakeCard("GLOW");
         gtk_box_pack_start(GTK_BOX(glow), MakeRow("Enabled",    &g_cfg->glow,      &g_cfg->bind_glow), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(glow), MakeRow("Teammates",  &g_cfg->glow_team, nullptr),           FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(glow), MakeColorRow("Enemy color",    &g_cfg->glow_enemy_rgba), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(glow), MakeColorRow("Teammate color", &g_cfg->glow_team_rgba),  FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), glow, FALSE, FALSE, 0);
+        Place(page, glow, true);
 
         GtkWidget* chams = MakeCard("CHAMS");
         gtk_box_pack_start(GTK_BOX(chams), MakeRow("Enabled",          &g_cfg->chams,      &g_cfg->bind_chams), FALSE, FALSE, 0);
@@ -818,22 +1224,35 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(chams), MakeColorRow("Visible color",  &g_cfg->chams_visible_rgba), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(chams), MakeColorRow("Hidden color",   &g_cfg->chams_hidden_rgba),  FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(chams), MakeColorRow("Teammate color", &g_cfg->chams_team_rgba),    FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), chams, FALSE, FALSE, 0);
+        Place(page, chams, true);
 
+        gtk_stack_add_named(GTK_STACK(g_stack), page, "render-esp");
+    }
+    {
+        GtkWidget* page = MakePage();
         GtkWidget* hud = MakeCard("HUD");
         gtk_box_pack_start(GTK_BOX(hud), MakeRow("Watermark",       &g_cfg->watermark,  &g_cfg->bind_watermark), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(hud), MakeRow("Bomb timer",      &g_cfg->bomb_timer, &g_cfg->bind_bomb),      FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(hud), MakeRow("Keybinds panel",  &g_cfg->keybinds,   &g_cfg->bind_keybinds),  FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(hud), MakeRow("Spectators list", &g_cfg->spectators, nullptr),                FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(hud), MakeRow("Media player",    &g_cfg->media_player, nullptr),             FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(hud), MakeRow("Velocity graph",  &g_cfg->velocity_graph, nullptr),            FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(hud), MakeRow("Keystrokes",      &g_cfg->keystrokes, nullptr),                FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(hud), MakeRow("Notifications",   &g_cfg->notifications, nullptr),             FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(hud), MakeRow("Hitmarker",       &g_cfg->hitmarker,  nullptr),                FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(hud), MakeRow("Radar",           &g_cfg->radar,      nullptr),                FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), hud, FALSE, FALSE, 0);
+        Place(page, hud, false);
 
         GtkWidget* cross = MakeCard("CROSSHAIR");
         gtk_box_pack_start(GTK_BOX(cross), MakeRow("Custom crosshair", &g_cfg->crosshair,        &g_cfg->bind_crosshair), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(cross), MakeRow("Sniper crosshair", &g_cfg->sniper_crosshair, nullptr),                FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), cross, FALSE, FALSE, 0);
+        Place(page, cross, true);
 
+
+        gtk_stack_add_named(GTK_STACK(g_stack), page, "render-hud");
+    }
+    {
+        GtkWidget* page = MakePage();
         GtkWidget* world_card = MakeCard("WORLD");
         gtk_box_pack_start(GTK_BOX(world_card), MakeSliderRow("Brightness %", &g_cfg->world_brightness, 10, 400, 5), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(world_card), MakeRow("Night mode", &g_cfg->night_mode, &g_cfg->bind_night_mode), FALSE, FALSE, 0);
@@ -841,19 +1260,26 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(world_card), MakeRow("Night sky (stars, moon)", &g_cfg->night_sky, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(world_card), MakeRow("Ambient tint", &g_cfg->ambient_tint, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(world_card), MakeColorRow("Tint color", &g_cfg->ambient_tint_rgba), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), world_card, FALSE, FALSE, 0);
+        Place(page, world_card, false);
+
+        GtkWidget* saturation = MakeCard("SATURATION");
+        gtk_box_pack_start(GTK_BOX(saturation), MakeRow("Saturation", &g_cfg->saturation, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(saturation), MakeSliderRow("Saturation %", &g_cfg->saturation_value, 0, 300, 5), FALSE, FALSE, 0);
+        Place(page, saturation, false);
 
         GtkWidget* weather = MakeCard("WEATHER");
         gtk_box_pack_start(GTK_BOX(weather), MakeComboRow("Effect", &g_cfg->weather_mode, {"Off", "Rain", "Snow", "Ash", "Embers"}), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(weather), MakeSliderRow("Density", &g_cfg->weather_density, 5, 100, 1), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), weather, FALSE, FALSE, 0);
+        Place(page, weather, true);
 
-        gtk_stack_add_named(GTK_STACK(g_stack), page, "render");
-        AddSidebarItemSvg(sidebar, s_svg_render.c_str(), "render", "Render");
+        gtk_stack_add_named(GTK_STACK(g_stack), page, "render-world");
     }
+    AddSidebarHeader(sidebar, "VISUALS");
+    AddSidebarItemSvg(sidebar, s_svg_esp.c_str(), "render-esp", "ESP");
+    AddSidebarItemSvg(sidebar, s_svg_hud.c_str(), "render-hud", "HUD");
+    AddSidebarItemSvg(sidebar, s_svg_world.c_str(), "render-world", "World");
     {
         GtkWidget* page = MakePage();
-        GtkWidget* box = PageBox(page);
         GtkWidget* uns = MakeCard("UNSAFE (memory writes)");
         gtk_box_pack_start(GTK_BOX(uns), MakeRow("Thirdperson",   &g_cfg->thirdperson,          &g_cfg->bind_thirdperson), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(uns), MakeRow("No flash",      &g_cfg->no_flash,             nullptr), FALSE, FALSE, 0);
@@ -861,15 +1287,33 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(uns), MakeRow("Smoke recolor", &g_cfg->smoke_color_enabled,  nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(uns), MakeColorRow("Smoke color", &g_cfg->smoke_color_rgba),            FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(uns), MakeSliderRow("Smoke strength %", &g_cfg->smoke_color_strength, 10, 300, 5), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), uns, FALSE, FALSE, 0);
+        Place(page, uns, false);
         GtkWidget* radar = MakeCard("RADAR HACK");
         gtk_box_pack_start(GTK_BOX(radar), MakeRow("Enabled", &g_cfg->radar_hack, nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), radar, FALSE, FALSE, 0);
+        Place(page, radar, true);
         GtkWidget* misc = MakeCard("MISC");
         gtk_box_pack_start(GTK_BOX(misc), MakeRow("Toggle GUI (bind)", nullptr, &g_cfg->bind_toggle_gui), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(misc), MakeRow("Edit HUD",  &g_cfg->edit_mode, &g_cfg->bind_edit_hud), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(box), misc, FALSE, FALSE, 0);
+        Place(page, misc, true);
+        GtkWidget* sound = MakeCard("HIT SOUND");
+        gtk_box_pack_start(GTK_BOX(sound), MakeComboRow("Hit sound", &g_cfg->hit_sound, {"Off", "Click", "Ding", "Bell", "Pop"}), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(sound), MakeSliderRow("Hit sound volume", &g_cfg->hit_sound_volume, 0, 100, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(sound), MakeRow("Kills only", &g_cfg->hit_sound_kills_only, nullptr), FALSE, FALSE, 0);
+        GtkWidget* preview_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_style_context_add_class(gtk_widget_get_style_context(preview_row), "row");
+        GtkWidget* preview_hit = gtk_button_new_with_label("Play hit");
+        GtkWidget* preview_kill = gtk_button_new_with_label("Play kill");
+        auto play = +[](GtkButton* button, gpointer kill) {
+            hitsound::Play(static_cast<hitsound::Style>(g_cfg->hit_sound), g_cfg->hit_sound_volume, kill != nullptr);
+        };
+        g_signal_connect(preview_hit, "clicked", G_CALLBACK(play), nullptr);
+        g_signal_connect(preview_kill, "clicked", G_CALLBACK(play), GINT_TO_POINTER(1));
+        gtk_box_pack_start(GTK_BOX(preview_row), preview_hit, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(preview_row), preview_kill, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(sound), preview_row, FALSE, FALSE, 0);
+        Place(page, sound, false);
         gtk_stack_add_named(GTK_STACK(g_stack), page, "misc");
+        AddSidebarHeader(sidebar, "OTHER");
         AddSidebarItemSvg(sidebar, s_svg_misc.c_str(), "misc", "Misc");
     }
     {
@@ -897,11 +1341,24 @@ static GtkWidget* BuildGui() {
         }), list_box);
 
         gtk_box_pack_start(GTK_BOX(box), card, FALSE, FALSE, 0);
+        gtk_widget_destroy(GTK_WIDGET(g_object_get_data(G_OBJECT(page), "right")));
         gtk_stack_add_named(GTK_STACK(g_stack), page, "scripts");
         AddSidebarItemSvg(sidebar, s_svg_scripts.c_str(), "scripts", "Scripts");
     }
 
+    g_search_page = MakePage();
+    gtk_stack_add_named(GTK_STACK(g_stack), g_search_page, "search");
+    g_signal_connect(g_stack, "notify::visible-child-name", G_CALLBACK(+[](GObject*, GParamSpec*, gpointer) {
+        const char* current = gtk_stack_get_visible_child_name(GTK_STACK(g_stack));
+        if (current && std::string(current) != "search" && !g_card_homes.empty() && g_search_entry) {
+            g_page_before_search = current;
+            gtk_entry_set_text(GTK_ENTRY(g_search_entry), "");
+            ApplySearch("");
+        }
+        RefreshSidebarHighlight();
+    }), nullptr);
     gtk_stack_set_visible_child_name(GTK_STACK(g_stack), "legit");
+    RefreshSidebarHighlight();
     return win;
 }
 
@@ -985,6 +1442,7 @@ static gboolean CheckToggleFlag(gpointer) {
             gtk_widget_hide(g_win);
         } else {
             gtk_widget_show_all(g_win);
+            if (g_search_entry) ApplySearch(gtk_entry_get_text(GTK_ENTRY(g_search_entry)));
             gtk_window_present(GTK_WINDOW(g_win));
         }
     }

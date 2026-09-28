@@ -26,7 +26,7 @@ const char* Path() {
     return s_path;
 }
 
-static constexpr uint32_t kMigrationLevel = 9;
+static constexpr uint32_t kMigrationLevel = 18;
 
 static void DefaultEspExtras(Settings& s) {
     s.sound_esp_rgba = 0x00CCFFC0;
@@ -61,9 +61,38 @@ static void Migrate(Settings& s) {
     if (s.migration_level < 6) s.weather_density = 60;
     if (s.migration_level < 7) DefaultWorld(s);
     if (s.migration_level < 8) s.smoke_color_strength = 100;
+    if (s.migration_level < 10) {
+        s.esp_ammo = 1;
+        s.hit_sound_volume = 70;
+    }
     if (s.migration_level < 9) {
         s.esp_flags = 1;
         s.grenade_world = 1;
+    }
+    if (s.migration_level < 18) s.hud_notif_x = s.hud_notif_y = -1;
+    if (s.migration_level < 17) {
+        s.notifications = 1;
+        s.hud_keys_x = s.hud_keys_y = -1;
+    s.hud_notif_x = s.hud_notif_y = -1;
+        if (s.hud_spectators_x == 0 && s.hud_spectators_y == 0) s.hud_spectators_x = s.hud_spectators_y = -1;
+        if (s.hud_media_x == 0 && s.hud_media_y == 0) s.hud_media_x = s.hud_media_y = -1;
+    }
+    if (s.migration_level < 16) s.min_damage_enabled = 1;
+    if (s.migration_level < 15) s.saturation_value = 100;
+    if (s.migration_level < 14) {
+        s.fast_stop_enabled = s.fast_stop != 0;
+        s.fast_stop_mode = s.fast_stop == 2 ? 1 : 0;
+    }
+    if (s.migration_level < 13) {
+        s.md_override_value = 10;
+        SetBindMode(s, &s.bind_force_shot, BindMode::Hold);
+        SetBindMode(s, &s.bind_md_override, BindMode::Hold);
+    }
+    if (s.migration_level < 12) s.hud_velocity_x = s.hud_velocity_y = -1;
+    if (s.migration_level < 11) {
+        s.hud_wm_x = s.hud_wm_y = -1;
+        s.hud_keybinds_x = s.hud_keybinds_y = -1;
+        s.hud_bomb_x = s.hud_bomb_y = -1;
     }
     s.migration_level = kMigrationLevel;
 }
@@ -136,9 +165,9 @@ void Defaults(Settings& s) {
     s.snap_tap = 1;
     s.bunnyhop = 1;
     s.auto_strafe = 1;
-    s.hud_wm_x = 20; s.hud_wm_y = 20;
-    s.hud_bomb_x = -1; s.hud_bomb_y = 20;
-    s.hud_keybinds_x = 20; s.hud_keybinds_y = 60;
+    s.hud_wm_x = -1; s.hud_wm_y = -1;
+    s.hud_bomb_x = -1; s.hud_bomb_y = -1;
+    s.hud_keybinds_x = -1; s.hud_keybinds_y = -1;
     s.bind_toggle_gui = 0xff63;
     s.bind_edit_hud   = 0xffc5;
     s.bind_trigger    = 0;
@@ -185,6 +214,43 @@ void Defaults(Settings& s) {
     s.esp_flags = 1;
     s.trigger_autostop = 0;
     s.grenade_world = 1;
+    s.fast_stop = 0;
+    s.esp_ammo = 1;
+    s.hit_sound = 0;
+    s.hit_sound_volume = 70;
+    s.bhop_method = 0;
+    s.velocity_graph = 0;
+    s.hud_velocity_x = s.hud_velocity_y = -1;
+    s.trigger_force_shot = 0;
+    s.bind_force_shot = 0;
+    s.trigger_md_override = 0;
+    s.bind_md_override = 0;
+    s.md_override_value = 10;
+    s.fast_stop_enabled = 0;
+    s.bind_fast_stop = 0;
+    s.fast_stop_mode = 0;
+    s.saturation = 0;
+    s.saturation_value = 100;
+    s.hit_sound_kills_only = 0;
+    s.min_damage_enabled = 1;
+    s.fast_ladder = 0;
+    s.media_player = 1;
+    s.hud_spectators_x = -1;
+    s.hud_spectators_y = -1;
+    s.hud_media_x = -1;
+    s.hud_media_y = -1;
+    s.edge_bug = 0;
+    s.bind_edge_bug = 0;
+    s.edge_jump = 0;
+    s.bind_edge_jump = 0;
+    s.ladder_jump = 0;
+    s.keystrokes = 0;
+    s.notifications = 1;
+    s.hud_keys_x = s.hud_keys_y = -1;
+    SetBindMode(s, &s.bind_force_shot, BindMode::Hold);
+    SetBindMode(s, &s.bind_md_override, BindMode::Hold);
+    SetBindMode(s, &s.bind_edge_bug, BindMode::Hold);
+    SetBindMode(s, &s.bind_edge_jump, BindMode::Hold);
     s.migration_level = kMigrationLevel;
 }
 
@@ -193,6 +259,28 @@ const std::vector<FieldInfo>& Fields() {
     static const std::vector<FieldInfo> fields = {SPAXER_SETTINGS_FIELDS(SPAXER_FIELD_INFO)};
 #undef SPAXER_FIELD_INFO
     return fields;
+}
+
+static int BindSlot(const Settings& settings, const uint32_t* bind) {
+    size_t offset = reinterpret_cast<const char*>(bind) - reinterpret_cast<const char*>(&settings);
+    int slot = 0;
+    for (const FieldInfo& field : Fields()) {
+        if (field.kind != FieldKind::Bind) continue;
+        if (field.offset == offset) return slot < static_cast<int>(sizeof(settings.bind_modes)) ? slot : -1;
+        slot++;
+    }
+    return -1;
+}
+
+BindMode GetBindMode(const Settings& settings, const uint32_t* bind) {
+    int slot = BindSlot(settings, bind);
+    uint8_t value = slot >= 0 ? __atomic_load_n(&settings.bind_modes[slot], __ATOMIC_RELAXED) : 0;
+    return value <= static_cast<uint8_t>(BindMode::Release) ? static_cast<BindMode>(value) : BindMode::Toggle;
+}
+
+void SetBindMode(Settings& settings, const uint32_t* bind, BindMode mode) {
+    int slot = BindSlot(settings, bind);
+    if (slot >= 0) __atomic_store_n(&settings.bind_modes[slot], static_cast<uint8_t>(mode), __ATOMIC_RELAXED);
 }
 
 const FieldInfo* FindField(const std::string& name) {

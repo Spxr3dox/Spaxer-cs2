@@ -108,7 +108,15 @@ python3 tools/map_collision.py de_mirage  # or just one
 
 If you join a map that hasn't been converted yet, the overlay starts the converter for it in the background.
 
-### 4. Run it
+### 4. ESP preview
+
+The settings window shows a live preview of an agent with your current ESP, chams and glow settings. Render the agent once:
+
+```sh
+python3 tools/preview_model.py
+```
+
+### 5. Run it
 
 ```sh
 ./spaxer &

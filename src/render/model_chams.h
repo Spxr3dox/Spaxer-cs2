@@ -32,6 +32,7 @@ public:
     void Draw(const SkinnedModel& model, const BoneTransform* bones, const render::Camera& camera,
               uint32_t rgba, Material material);
     void Paint(cairo_t* cr);
+    float CoverageAt(int screen_x, int screen_y) const;
 
 private:
     struct ScreenVertex { float x, y, inv_depth, r, g, b; bool valid; };

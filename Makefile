@@ -3,8 +3,8 @@ CXXFLAGS := -std=c++20 -O2 -fopenmp -pipe -Wall -Wextra -Wno-unused-parameter -W
 
 INCLUDES := -Isrc
 
-PKG_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 gtk-layer-shell-0 cairo x11 xtst luajit)
-PKG_LIBS   := $(shell pkg-config --libs   gtk+-3.0 gtk-layer-shell-0 cairo x11 xtst luajit)
+PKG_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 gtk-layer-shell-0 cairo x11 xtst xfixes luajit wayland-client)
+PKG_LIBS   := $(shell pkg-config --libs   gtk+-3.0 gtk-layer-shell-0 cairo x11 xtst xfixes luajit wayland-client)
 
 GUI_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 x11)
 GUI_LIBS   := $(shell pkg-config --libs   gtk+-3.0 x11)
@@ -27,23 +27,30 @@ SRC := \
   src/features/chams.cpp \
   src/features/radar_hack.cpp \
   src/features/hitmarker.cpp \
+  src/features/hit_sound.cpp \
   src/features/sound_esp.cpp \
   src/features/movement.cpp \
   src/features/lua_engine.cpp \
   src/render/camera.cpp \
+  src/render/esp_icons.cpp \
   src/render/model_chams.cpp \
   src/overlay/world.cpp \
   src/overlay/weather.cpp \
   src/overlay/night_sky.cpp \
   src/overlay/grenade.cpp \
+  src/overlay/saturation.cpp \
+  src/overlay/crosshair_capture.cpp \
   src/overlay/main.cpp
 
 GUI_SRC := \
   src/config/settings.cpp \
+  src/features/hit_sound.cpp \
+  src/render/esp_icons.cpp \
   src/gui/main.cpp
 
 OBJDIR := build
-OBJ := $(patsubst %.cpp,$(OBJDIR)/%.o,$(SRC))
+WL_SRC := $(wildcard src/overlay/wl/*.c)
+OBJ := $(patsubst %.cpp,$(OBJDIR)/%.o,$(SRC)) $(patsubst %.c,$(OBJDIR)/%.o,$(WL_SRC))
 GUI_OBJ := $(patsubst %.cpp,$(OBJDIR)/gui-%.o,$(GUI_SRC))
 TARGET := spaxer
 GUI_TARGET := spaxer-gui
@@ -59,6 +66,10 @@ $(GUI_TARGET): $(GUI_OBJ)
 $(OBJDIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(PKG_CFLAGS) -c $< -o $@
+
+$(OBJDIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -c $< -o $@
 
 $(OBJDIR)/gui-%.o: %.cpp
 	@mkdir -p $(dir $@)

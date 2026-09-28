@@ -8,6 +8,7 @@ namespace features {
     void UpdatePlayer();
     void UpdateEsp();
     bool ReloadCs2Crosshair(Settings* cfg);
+    bool GameCrosshairColor(double& r, double& g, double& b);
 
     void StartTriggerBot();
     void StopTriggerBot();
@@ -22,6 +23,8 @@ namespace features {
     void StopEffects();
     void ApplyGlow();
     void ApplyChams();
+    void StartChams();
+    void StopChams();
     void ApplyRadarHack();
     void UpdateHitmarker();
     void UpdateSoundEsp();

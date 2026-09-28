@@ -1,5 +1,7 @@
 #pragma once
 #include <atomic>
+#include <chrono>
+#include <string>
 #include <mutex>
 #include <vector>
 #include <cstdint>
@@ -16,6 +18,8 @@ struct EspEntry {
     char  name[32];
     char  weapon[24];
     uint32_t flags;
+    int   ammo;
+    int   max_ammo;
 };
 
 enum EspFlag : uint32_t {
@@ -48,6 +52,14 @@ struct DroppedItemEntry {
     char name[32];
 };
 
+enum class NoticeKind : int { Info, Hit, Kill, On, Off, Bomb };
+
+struct Notice {
+    std::string text;
+    NoticeKind kind;
+    std::chrono::steady_clock::time_point time;
+};
+
 struct HudState {
     std::atomic<bool>  bomb_visible{false};
     std::atomic<float> bomb_blow_secs{0.f};
@@ -76,6 +88,21 @@ struct HudState {
     std::mutex                 grenades_mtx;
     std::vector<ThrownGrenade> thrown_grenades;
 
+    std::mutex media_mtx;
+    char media_title[128]{};
+    char media_artist[128]{};
+    char media_status[32]{};
+    char media_player_name[64]{};
+    bool media_active{false};
+
+    std::mutex          notices_mtx;
+    std::vector<Notice> notices;
 };
 
 extern HudState g_hud;
+
+inline void PushNotice(std::string text, NoticeKind kind) {
+    std::lock_guard<std::mutex> lock(g_hud.notices_mtx);
+    g_hud.notices.push_back({std::move(text), kind, std::chrono::steady_clock::now()});
+    if (g_hud.notices.size() > 8) g_hud.notices.erase(g_hud.notices.begin());
+}

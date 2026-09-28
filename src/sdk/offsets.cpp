@@ -55,6 +55,8 @@ static const OffsetEntry kOffsetTable[] = {
     {"m_iszPlayerName", &m_iszPlayerName},
     {"m_lifeState", &m_lifeState},
     {"m_fFlags", &m_fFlags},
+    {"m_MoveType", &m_MoveType},
+    {"m_nActualMoveType", &m_nActualMoveType},
     {"m_pGameSceneNode", &m_pGameSceneNode},
     {"m_modelState", &m_modelState},
     {"m_pWeaponServices", &m_pWeaponServices},
@@ -234,6 +236,8 @@ void ResetProcessState() {
     m_hPlayerPawn = 0xA94;
     m_lifeState = 0;
     m_fFlags = 0;
+    m_MoveType = 0x69d;
+    m_nActualMoveType = 0x69e;
     m_pGameSceneNode = 0;
     m_modelState = 0;
     m_pWeaponServices = 0;

@@ -1,7 +1,11 @@
 #pragma once
 #include <cstdint>
 #include <cmath>
+#include <algorithm>
 #include <cstring>
+#include <string>
+#include <unordered_map>
+#include <vector>
 #include "memory/process.h"
 #include "sdk/offsets.h"
 
@@ -132,12 +136,54 @@ inline bool DesignerNameIs(uintptr_t entity, const char* expected) {
     return DesignerName(entity, buffer, sizeof(buffer)) && std::strcmp(buffer, expected) == 0;
 }
 
+struct EntitySlot {
+    int index;
+    uintptr_t entity;
+    const char* designer;
+};
+
+inline const char* DesignerNameAt(uintptr_t name_ptr) {
+    thread_local std::unordered_map<uintptr_t, std::string> cache;
+    if (!name_ptr) return "";
+    auto it = cache.find(name_ptr);
+    if (it != cache.end()) return it->second.c_str();
+    if (cache.size() > 4096) cache.clear();
+    char buffer[48] = {};
+    bool ok = false;
+    for (size_t length = sizeof(buffer) - 1; length >= 8 && !ok; length /= 2) {
+        if (g_proc.ReadBytes(name_ptr, buffer, length)) {
+            buffer[length] = 0;
+            ok = true;
+        }
+    }
+    if (!ok) return "";
+    return cache.emplace(name_ptr, buffer).first->second.c_str();
+}
+
+inline std::vector<EntitySlot> EntitySnapshot(uintptr_t list, int from, int to) {
+    std::vector<EntitySlot> slots;
+    if (!list) return slots;
+    thread_local std::vector<uint8_t> chunk_data(ENTITY_IDENTITY_SIZE * 512);
+    for (int chunk = from >> 9; chunk <= (to - 1) >> 9; chunk++) {
+        uintptr_t chunk_base = g_proc.Read<uintptr_t>(list + 8 * chunk + 0x10);
+        if (!chunk_base || !g_proc.ReadBytes(chunk_base, chunk_data.data(), chunk_data.size())) continue;
+        int first = std::max(from, chunk << 9), last = std::min(to, (chunk + 1) << 9);
+        for (int index = first; index < last; index++) {
+            const uint8_t* identity = chunk_data.data() + ENTITY_IDENTITY_SIZE * (index & 0x1FF);
+            uintptr_t entity, name_ptr;
+            std::memcpy(&entity, identity, sizeof(entity));
+            std::memcpy(&name_ptr, identity + kIdentityDesignerName, sizeof(name_ptr));
+            if (!entity) continue;
+            slots.push_back({index, entity, DesignerNameAt(name_ptr)});
+        }
+    }
+    return slots;
+}
+
 inline uintptr_t PlantedC4() {
     if (!off::g_EntityListPtr || !off::m_bBombTicking) return 0;
-    for (int i = 65; i < 2048; i++) {
-        uintptr_t ent = EntityFromList(off::g_EntityListPtr, i);
-        if (ent && DesignerNameIs(ent, "planted_c4")) return ent;
-    }
+    for (const EntitySlot& slot : EntitySnapshot(off::g_EntityListPtr, 65, 2048))
+        if (!std::strcmp(slot.designer, "planted_c4")) return slot.entity;
     return 0;
 }
 

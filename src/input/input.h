@@ -16,6 +16,7 @@ public:
     void ForceVirtualKey(int key_code, bool down);
     void ClickLeft();
     void MouseMove(int dx, int dy);
+    void ScrollDown();
     void HoldShift(bool down);
     void SetKey(int key_code, bool down);
     void SetMouseButton(int button, bool down);

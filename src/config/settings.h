@@ -6,7 +6,7 @@
 #include <vector>
 
 constexpr uint32_t SETTINGS_MAGIC = 0x53505841u;
-constexpr uint32_t SETTINGS_VERSION = 17;
+constexpr uint32_t SETTINGS_VERSION = 18;
 
 struct WeaponSettings {
     uint32_t enabled;
@@ -158,6 +158,43 @@ struct Settings {
     uint32_t esp_flags;
     uint32_t trigger_autostop;
     uint32_t grenade_world;
+    uint32_t fast_stop;
+    uint32_t esp_ammo;
+    uint32_t hit_sound;
+    int32_t  hit_sound_volume;
+    uint8_t  bind_modes[64];
+    uint32_t bhop_method;
+    uint32_t velocity_graph;
+    int32_t  hud_velocity_x, hud_velocity_y;
+    uint32_t trigger_force_shot;
+    uint32_t bind_force_shot;
+    uint32_t trigger_md_override;
+    uint32_t bind_md_override;
+    int32_t  md_override_value;
+    uint32_t fast_stop_enabled;
+    uint32_t bind_fast_stop;
+    uint32_t fast_stop_mode;
+    uint32_t saturation;
+    int32_t  saturation_value;
+    uint32_t hit_sound_kills_only;
+    uint32_t min_damage_enabled;
+    uint32_t fast_ladder;
+    uint32_t media_player;
+    int32_t  hud_spectators_x;
+    int32_t  hud_spectators_y;
+    int32_t  hud_media_x;
+    int32_t  hud_media_y;
+    uint32_t edge_bug;
+    uint32_t bind_edge_bug;
+    uint32_t edge_jump;
+    uint32_t bind_edge_jump;
+    uint32_t ladder_jump;
+    uint32_t keystrokes;
+    uint32_t notifications;
+    int32_t  hud_keys_x;
+    int32_t  hud_keys_y;
+    int32_t  hud_notif_x;
+    int32_t  hud_notif_y;
 };
 
 namespace settings {
@@ -189,6 +226,10 @@ namespace settings {
     };
 
     const std::vector<FieldInfo>& Fields();
+
+    enum class BindMode : uint8_t { Toggle = 0, Hold = 1, Release = 2 };
+    BindMode GetBindMode(const Settings& settings, const uint32_t* bind);
+    void SetBindMode(Settings& settings, const uint32_t* bind, BindMode mode);
     const FieldInfo* FindField(const std::string& name);
 
     Settings* Attach();

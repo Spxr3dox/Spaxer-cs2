@@ -256,10 +256,13 @@ void Input::HoldCrouch(bool down) {
     if (down) EnsureKbd();
     if (s_kbd_fd >= 0) {
         EmitKey(KEY_LEFTCTRL, down ? 1 : 0);
+        EmitKey(KEY_LEFTSHIFT, down ? 1 : 0);
     } else if (m_display) {
         Display* d = static_cast<Display*>(m_display);
         KeyCode kc = XKeysymToKeycode(d, XK_Control_L);
         XTestFakeKeyEvent(d, kc, down ? True : False, 0);
+        KeyCode ks = XKeysymToKeycode(d, XK_Shift_L);
+        XTestFakeKeyEvent(d, ks, down ? True : False, 0);
         XFlush(d);
     }
     m_crouch_held.store(down);
@@ -366,6 +369,14 @@ std::atomic<bool>* Input::VirtualKeyState(int key_code) {
 void Input::SetAutoStrafe(int direction) {
     SetVirtualKey(KEY_A, direction < 0);
     SetVirtualKey(KEY_D, direction > 0);
+}
+
+void Input::ScrollDown() {
+    if (!m_display) return;
+    Display* d = static_cast<Display*>(m_display);
+    XTestFakeButtonEvent(d, 5, True, CurrentTime);
+    XTestFakeButtonEvent(d, 5, False, CurrentTime);
+    XFlush(d);
 }
 
 void Input::MouseMove(int dx, int dy) {

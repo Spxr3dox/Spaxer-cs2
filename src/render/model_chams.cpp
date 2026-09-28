@@ -257,6 +257,12 @@ void ModelRenderer::Draw(const SkinnedModel& model, const BoneTransform* bones, 
         }
 }
 
+float ModelRenderer::CoverageAt(int screen_x, int screen_y) const {
+    int x = static_cast<int>(screen_x * kRenderScale), y = static_cast<int>(screen_y * kRenderScale);
+    if (x < min_x_ || x > max_x_ || y < min_y_ || y > max_y_) return 0.f;
+    return ((color_[static_cast<size_t>(y) * width_ + x] >> 24) & 0xFF) / 255.f;
+}
+
 void ModelRenderer::Paint(cairo_t* cr) {
     if (max_x_ < min_x_) return;
     int stride = width_ * 4;

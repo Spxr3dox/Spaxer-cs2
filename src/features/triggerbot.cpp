@@ -21,7 +21,7 @@ constexpr float kUnscopedSniperPenalty = 0.08f;
 constexpr int kHitChanceSamples = 64;
 constexpr float kGoldenAngle = 2.39996323f;
 constexpr float kCounterThreshold = 15.f;
-constexpr auto kAutoStopLimit = std::chrono::milliseconds(150);
+constexpr auto kAutoStopLimit = std::chrono::milliseconds(700);
 static std::thread s_thread;
 
 static inline float NormAngle(float a) {
@@ -224,7 +224,7 @@ static int HitChancePercent(uintptr_t local_pawn, uintptr_t target, float cone, 
     float spread = std::tan(cone);
     int hits = 0;
     for (int i = 0; i < kHitChanceSamples; i++) {
-        float radius = spread * std::sqrt((i + 0.5f) / kHitChanceSamples);
+        float radius = spread * ((i + 0.5f) / kHitChanceSamples);
         float angle = i * kGoldenAngle;
         float px = aim_x + std::cos(angle) * radius, py = aim_y + std::sin(angle) * radius;
         for (const ProjectedCapsule& capsule : capsules) {
@@ -239,30 +239,72 @@ static int HitChancePercent(uintptr_t local_pawn, uintptr_t target, float cone, 
     return hits * 100 / kHitChanceSamples;
 }
 
-static void AutoStop(uintptr_t pawn, float stop_speed) {
-    ViewTangent view;
-    if (!view.Load()) return;
-    float fx = view.row[2][0], fy = view.row[2][1];
-    float flat = std::hypot(fx, fy);
-    if (flat < 1e-3f) return;
-    fx /= flat; fy /= flat;
-    Vec3 velocity = g_proc.Read<Vec3>(pawn + off::m_vecVelocity);
-    float forward_speed = velocity.x * fx + velocity.y * fy;
-    float side_speed = velocity.x * fy - velocity.y * fx;
-    int side_key = side_speed > kCounterThreshold ? KEY_A : side_speed < -kCounterThreshold ? KEY_D : 0;
-    int forward_key = forward_speed > kCounterThreshold ? KEY_S : forward_speed < -kCounterThreshold ? KEY_W : 0;
-    if (!side_key && !forward_key) return;
-    if (side_key) g_input.SetVirtualKey(side_key, true);
-    if (forward_key) g_input.SetVirtualKey(forward_key, true);
-    auto deadline = std::chrono::steady_clock::now() + kAutoStopLimit;
-    while (std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(4));
-        Vec3 now = g_proc.Read<Vec3>(pawn + off::m_vecVelocity);
-        if (std::hypot(now.x, now.y) <= stop_speed) break;
+class StopHold {
+public:
+    void Engage(uintptr_t pawn) {
+        auto now = std::chrono::steady_clock::now();
+        if (m_expired) return;
+        if (!m_engaged) m_since = now;
+        if (now - m_since > kAutoStopLimit) {
+            ReleaseKeys();
+            m_expired = true;
+            return;
+        }
+        m_engaged = true;
+        bool forward = g_input.IsPhysicalKeyDown(KEY_W), back = g_input.IsPhysicalKeyDown(KEY_S);
+        bool left = g_input.IsPhysicalKeyDown(KEY_A), right = g_input.IsPhysicalKeyDown(KEY_D);
+        bool want_w = back && !forward, want_s = forward && !back;
+        bool want_a = right && !left, want_d = left && !right;
+        ViewTangent view;
+        if (view.Load() && off::m_vecVelocity) {
+            float fx = view.row[2][0], fy = view.row[2][1];
+            float flat = std::hypot(fx, fy);
+            if (flat > 1e-3f) {
+                fx /= flat; fy /= flat;
+                Vec3 velocity = g_proc.Read<Vec3>(pawn + off::m_vecVelocity);
+                float forward_speed = velocity.x * fx + velocity.y * fy;
+                float side_speed = velocity.x * fy - velocity.y * fx;
+                if (!forward && !back) {
+                    want_s = forward_speed > kCounterThreshold;
+                    want_w = forward_speed < -kCounterThreshold;
+                }
+                if (!left && !right) {
+                    want_a = side_speed > kCounterThreshold;
+                    want_d = side_speed < -kCounterThreshold;
+                }
+            }
+        }
+        Set(KEY_W, want_w, m_w);
+        Set(KEY_S, want_s, m_s);
+        Set(KEY_A, want_a, m_a);
+        Set(KEY_D, want_d, m_d);
     }
-    if (side_key) g_input.SetVirtualKey(side_key, false);
-    if (forward_key) g_input.SetVirtualKey(forward_key, false);
-}
+
+    void Release() {
+        m_expired = false;
+        ReleaseKeys();
+    }
+
+private:
+    void ReleaseKeys() {
+        m_engaged = false;
+        Set(KEY_W, false, m_w);
+        Set(KEY_S, false, m_s);
+        Set(KEY_A, false, m_a);
+        Set(KEY_D, false, m_d);
+    }
+
+    static void Set(int key, bool down, bool& state) {
+        if (state == down) return;
+        state = down;
+        g_input.SetVirtualKey(key, down);
+    }
+
+    bool m_engaged = false;
+    bool m_expired = false;
+    bool m_w = false, m_s = false, m_a = false, m_d = false;
+    std::chrono::steady_clock::time_point m_since{};
+};
 
 static CrosshairHit HitboxUnderCrosshair(uintptr_t local_pawn, uintptr_t target, float tolerance) {
     CrosshairHit result;
@@ -322,6 +364,9 @@ static void Loop() {
 
     AimState aim;
     auto lastFire = clock::now() - std::chrono::seconds(1);
+    StopHold stop_hold;
+    uintptr_t wall_candidate = 0;
+    int wall_confirmations = 0;
     auto scoped_since = clock::now();
     bool was_scoped = false;
     const auto kCooldown = std::chrono::milliseconds(100);
@@ -333,6 +378,7 @@ static void Loop() {
         WeaponSettings* weapon = pawn ? settings::WeaponFor(*cfg, game::ActiveWeaponDefinitionIndex(pawn)) : nullptr;
         bool trigger_enabled = weapon ? settings::Enabled(weapon->trigger_enabled) : settings::Enabled(cfg->trigger_enabled);
         if (!trigger_enabled || !g_hud.cs2_focused.load() || !g_proc.IsAlive()) {
+            stop_hold.Release();
             g_input.HoldCrouch(false);
             aim.aimFrames = 0;
             continue;
@@ -379,10 +425,34 @@ static void Loop() {
             }
         }
 
+        bool hitbox_target = false;
+        if (!target && off::dwViewMatrix && vis::Ready()) {
+            Vec3 eye = game::EyePosition(pawn);
+            for (int i = 1; i <= 64 && !target; i++) {
+                uintptr_t ctrl = game::EntityFromList(list, i);
+                if (!ctrl) continue;
+                uint32_t handle = g_proc.Read<uint32_t>(ctrl + off::m_hPlayerPawn);
+                if (!handle || handle == 0xFFFFFFFF) continue;
+                uintptr_t enemy = game::EntityFromList(list, handle & 0x7FFF);
+                if (!enemy || enemy == pawn || game::IsDormant(enemy)) continue;
+                int hp = g_proc.Read<int>(enemy + off::m_iHealth);
+                int tm = game::Team(enemy);
+                if (hp <= 0 || hp > 100 || (tm != 2 && tm != 3) || tm == myTeam) continue;
+                CrosshairHit hit = HitboxUnderCrosshair(pawn, enemy, 1.f);
+                if (hit.hit && vis::LineOfSight(eye, hit.point)) {
+                    target = enemy;
+                    hitbox_target = true;
+                }
+            }
+        }
+
         vis::Ballistics ballistics{};
         bool autowall = settings::Enabled(cfg->autowall) && vis::Ready() && off::dwViewMatrix &&
                         vis::WeaponBallistics(game::ActiveWeaponDefinitionIndex(pawn), ballistics);
-        float min_damage = static_cast<float>(std::max(1, cfg->autowall_min_damage));
+        bool force_shot = settings::Enabled(cfg->trigger_force_shot);
+        int damage_setting = settings::Enabled(cfg->trigger_md_override) ? cfg->md_override_value : cfg->autowall_min_damage;
+        bool damage_limited = !force_shot && (settings::Enabled(cfg->min_damage_enabled) || settings::Enabled(cfg->trigger_md_override));
+        float min_damage = damage_limited ? static_cast<float>(std::max(1, damage_setting)) : 1.f;
         bool wall_target = false;
         if (!target && autowall) {
             for (int i = 1; i <= 64 && !target; i++) {
@@ -400,9 +470,12 @@ static void Loop() {
                     wall_target = true;
                 }
             }
+            wall_confirmations = target && target == wall_candidate ? wall_confirmations + 1 : (target ? 1 : 0);
+            wall_candidate = target;
+            if (target && wall_confirmations < 2) target = 0;
         }
 
-        if (!target) { aim.aimFrames = 0; g_input.HoldCrouch(false); continue; }
+        if (!target) { stop_hold.Release(); aim.aimFrames = 0; g_input.HoldCrouch(false); continue; }
 
         int def_idx = 0;
         if (off::m_pWeaponServices && off::m_hActiveWeapon && off::m_AttributeManager && off::m_Item && off::m_iItemDefinitionIndex) {
@@ -426,12 +499,12 @@ static void Loop() {
         }
 
         bool on_ground = !off::m_fFlags || (g_proc.Read<uint32_t>(pawn + off::m_fFlags) & 1u);
-        if (!on_ground) { aim.aimFrames = 0; continue; }
-        if (off::m_vecVelocity) {
+        if (!on_ground && !force_shot) { aim.aimFrames = 0; continue; }
+        if (off::m_vecVelocity && !force_shot) {
             Vec3 v = g_proc.Read<Vec3>(pawn + off::m_vecVelocity);
             float stop_speed = AccuracyFor(def_idx).max_speed * kAccurateSpeedFraction;
             if (std::hypot(v.x, v.y) > stop_speed) {
-                if (settings::Enabled(cfg->trigger_autostop)) AutoStop(pawn, stop_speed);
+                if (settings::Enabled(cfg->trigger_autostop)) stop_hold.Engage(pawn);
                 aim.aimFrames = 0;
                 continue;
             }
@@ -444,7 +517,7 @@ static void Loop() {
             if (clock::now() - scoped_since < std::chrono::milliseconds(120)) { aim.aimFrames = 0; continue; }
         }
         int hitchance = weapon ? weapon->trigger_hitchance : cfg->trigger_hitchance;
-        if (hitchance > 0) {
+        if (hitchance > 0 && !force_shot) {
             float cone = InaccuracyCone(pawn, def_idx, is_scoped, IsSniper(def_idx));
             if (HitChancePercent(pawn, target, cone, is_sniper ? 0.85f : 1.0f) < hitchance) { aim.aimFrames = 0; continue; }
         }
@@ -464,6 +537,9 @@ static void Loop() {
         float tolerance = is_sniper ? 0.85f : 1.0f;
         if (still_on_target && wall_target) {
             still_on_target = PenetratesTo(pawn, target, ballistics, min_damage, tolerance);
+        } else if (still_on_target && hitbox_target) {
+            CrosshairHit hit = HitboxUnderCrosshair(pawn, target, tolerance);
+            still_on_target = hit.hit && vis::LineOfSight(game::EyePosition(pawn), hit.point);
         } else if (still_on_target) {
             if (off::m_iIDEntIndex) still_on_target = g_proc.Read<int>(pawn + off::m_iIDEntIndex) == entIdx;
             if (still_on_target) still_on_target = CrosshairOnHitbox(pawn, target, tolerance);
@@ -475,6 +551,7 @@ static void Loop() {
         }
 
         g_input.ClickLeft();
+        stop_hold.Release();
         if (do_shift) { std::this_thread::sleep_for(std::chrono::milliseconds(30)); g_input.HoldShift(false); }
 
         aim.aimFrames = 0;

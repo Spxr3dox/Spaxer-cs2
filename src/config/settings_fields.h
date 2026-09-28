@@ -126,4 +126,41 @@
     X(smoke_color_strength, Number) \
     X(esp_flags, Toggle) \
     X(trigger_autostop, Toggle) \
-    X(grenade_world, Toggle)
+    X(grenade_world, Toggle) \
+    X(fast_stop, Number) \
+    X(esp_ammo, Toggle) \
+    X(hit_sound, Number) \
+    X(hit_sound_volume, Number) \
+    X(bhop_method, Number) \
+    X(velocity_graph, Toggle) \
+    X(hud_velocity_x, Number) \
+    X(hud_velocity_y, Number) \
+    X(trigger_force_shot, Toggle) \
+    X(bind_force_shot, Bind) \
+    X(trigger_md_override, Toggle) \
+    X(bind_md_override, Bind) \
+    X(md_override_value, Number) \
+    X(fast_stop_enabled, Toggle) \
+    X(bind_fast_stop, Bind) \
+    X(fast_stop_mode, Number) \
+    X(saturation, Toggle) \
+    X(saturation_value, Number) \
+    X(hit_sound_kills_only, Toggle) \
+    X(min_damage_enabled, Toggle) \
+    X(fast_ladder, Toggle) \
+    X(media_player, Toggle) \
+    X(hud_spectators_x, Number) \
+    X(hud_spectators_y, Number) \
+    X(hud_media_x, Number) \
+    X(hud_media_y, Number) \
+    X(edge_bug, Toggle) \
+    X(bind_edge_bug, Bind) \
+    X(edge_jump, Toggle) \
+    X(bind_edge_jump, Bind) \
+    X(ladder_jump, Toggle) \
+    X(keystrokes, Toggle) \
+    X(notifications, Toggle) \
+    X(hud_keys_x, Number) \
+    X(hud_keys_y, Number) \
+    X(hud_notif_x, Number) \
+    X(hud_notif_y, Number)

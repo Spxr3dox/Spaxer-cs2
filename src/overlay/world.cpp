@@ -1,6 +1,9 @@
 #include "overlay/world.h"
 #include "config/settings.h"
 #include "sdk/visibility.h"
+#include "render/esp_icons.h"
+#include "features/features.h"
+#include "overlay/crosshair_capture.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -143,6 +146,18 @@ static bool RoughlyOnScreen(const render::Camera& camera, const LivePlayer& play
     return sx > -margin && sx < camera.width + margin && sy > -margin && sy < camera.height + margin;
 }
 
+static void RevealCrosshair(cairo_t* cr, const chams::ModelRenderer& renderer, int width, int height) {
+    constexpr int kHalf = 48;
+    int cx = width / 2, cy = height / 2;
+    for (int d = -kHalf; d <= kHalf; d += 2) {
+        if (renderer.CoverageAt(cx + d, cy) > 0.f || renderer.CoverageAt(cx, cy + d) > 0.f) {
+            xhair::Request();
+            xhair::Draw(cr, width, height);
+            return;
+        }
+    }
+}
+
 void DrawChams(cairo_t* cr, const render::Camera& camera, const std::vector<LivePlayer>& players, const Settings& settings) {
     if (!settings::Enabled(settings.chams) || !camera.valid) return;
     static chams::ModelRenderer renderer;
@@ -162,6 +177,7 @@ void DrawChams(cairo_t* cr, const render::Camera& camera, const std::vector<Live
             FillCapsules(cr, camera, player, rgba);
     }
     renderer.Paint(cr);
+    RevealCrosshair(cr, renderer, camera.width, camera.height);
 }
 
 struct PlayerAnimation {
@@ -195,28 +211,6 @@ static void OutlinedText(cairo_t* cr, const char* text, double center_x, double 
     cairo_stroke_preserve(cr);
     cairo_set_source_rgba(cr, color.r, color.g, color.b, alpha);
     cairo_fill(cr);
-}
-
-static void DrawFlags(cairo_t* cr, uint32_t flags, double left, double top, double alpha) {
-    struct Tag { uint32_t bit; const char* text; Rgb color; };
-    static constexpr Tag kTags[] = {
-        {kFlagFlashed, "FLASHED", {1.0, 0.95, 0.4}},  {kFlagBomb, "C4", {1.0, 0.35, 0.3}},
-        {kFlagDefusing, "DEFUSING", {0.4, 0.8, 1.0}}, {kFlagKit, "KIT", {0.4, 0.8, 1.0}},
-        {kFlagScoped, "SCOPED", {0.9, 0.9, 0.95}},    {kFlagReloading, "RELOAD", {1.0, 0.7, 0.3}},
-    };
-    double y = top;
-    auto draw = [&](const char* text, Rgb color) {
-        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-        cairo_set_font_size(cr, 9.0);
-        cairo_text_extents_t extents;
-        cairo_text_extents(cr, text, &extents);
-        OutlinedText(cr, text, left + extents.width * 0.5 + extents.x_bearing, y, 9.0, color, alpha, true);
-        y += 11.0;
-    };
-    if (flags & kFlagHelmet) draw("HK", {0.85, 0.87, 0.9});
-    else if (flags & kFlagArmor) draw("K", {0.85, 0.87, 0.9});
-    for (const Tag& tag : kTags)
-        if (flags & tag.bit) draw(tag.text, tag.color);
 }
 
 static Rgb HealthColor(float fraction) {
@@ -326,7 +320,7 @@ void DrawEsp(cairo_t* cr, const render::Camera& camera, const std::vector<LivePl
         ScreenBox box;
         if (!ComputeBox(camera, player, box)) continue;
         bool visible = player.info.spotted_valid && player.info.visible;
-        Rgb color = enemy ? Rgb{1.0, 0.32, 0.32} : Rgb{0.35, 0.72, 1.0};
+        Rgb color = enemy ? Rgb{0.3, 0.55, 1.0} : Rgb{0.62, 0.85, 1.0};
         double alpha = animation.alpha * (enemy && player.info.spotted_valid && !visible ? 0.7 : 1.0);
         double width = box.right - box.left, height = box.bottom - box.top;
 
@@ -365,9 +359,27 @@ void DrawEsp(cairo_t* cr, const render::Camera& camera, const std::vector<LivePl
         }
         if (settings::Enabled(settings.esp_name) && player.info.name[0])
             OutlinedText(cr, player.info.name, (box.left + box.right) * 0.5, box.top - 5.0, 12.0, {1, 1, 1}, alpha, true);
-        if (settings::Enabled(settings.esp_weapon) && player.info.weapon[0])
-            OutlinedText(cr, player.info.weapon, (box.left + box.right) * 0.5, box.bottom + 13.0, 10.0, {0.85, 0.87, 0.9}, alpha, false);
-        if (settings::Enabled(settings.esp_flags)) DrawFlags(cr, player.info.flags, box.right + 5.0, box.top + 9.0, alpha);
+        double below = box.bottom;
+        if (settings::Enabled(settings.esp_ammo) && player.info.max_ammo > 0) {
+            double bar_y = box.bottom + 4.0, width = box.right - box.left;
+            double fraction = static_cast<double>(player.info.ammo) / player.info.max_ammo;
+            RoundedRect(cr, box.left - 1.0, bar_y - 1.0, width + 2.0, 5.0, 1.0);
+            cairo_set_source_rgba(cr, 0, 0, 0, 0.7 * alpha);
+            cairo_fill(cr);
+            RoundedRect(cr, box.left, bar_y, width * fraction, 3.0, 1.0);
+            cairo_set_source_rgba(cr, 0.3, 0.55, 1.0, alpha);
+            cairo_fill(cr);
+            below = bar_y + 4.0;
+        }
+        if (settings::Enabled(settings.esp_weapon) && player.info.weapon[0]) {
+            char label[48];
+            if (settings::Enabled(settings.esp_ammo) && player.info.max_ammo > 0)
+                snprintf(label, sizeof(label), "%s  %d/%d", player.info.weapon, player.info.ammo, player.info.max_ammo);
+            else
+                snprintf(label, sizeof(label), "%s", player.info.weapon);
+            OutlinedText(cr, label, (box.left + box.right) * 0.5, below + 12.0, 10.0, {0.85, 0.87, 0.9}, alpha, false);
+        }
+        if (settings::Enabled(settings.esp_flags)) icons::DrawFlagColumn(cr, player.info.flags, box.right + 5.0, box.top, 14.0, alpha);
     }
     for (auto it = animations.begin(); it != animations.end();) {
         if (now - it->second.seen > std::chrono::milliseconds(500)) it = animations.erase(it);
@@ -375,33 +387,106 @@ void DrawEsp(cairo_t* cr, const render::Camera& camera, const std::vector<LivePl
     }
 }
 
+struct ArrowState {
+    double angle = 0.0;
+    double alpha = 0.0;
+    double size = 1.0;
+    bool live = false;
+};
+
+static void ArrowPath(cairo_t* cr, double x, double y, double angle, double size) {
+    double c = std::cos(angle), sn = std::sin(angle);
+    auto point = [&](double ax, double ay) { return std::pair<double, double>{x + ax * c - ay * sn, y + ax * sn + ay * c}; };
+    auto [tx, ty] = point(size, 0);
+    auto [lx, ly] = point(-size * 0.62, -size * 0.66);
+    auto [nx, ny] = point(-size * 0.2, 0);
+    auto [rx, ry] = point(-size * 0.62, size * 0.66);
+    auto [c1x, c1y] = point(size * 0.1, -size * 0.3);
+    auto [c2x, c2y] = point(size * 0.1, size * 0.3);
+    cairo_new_path(cr);
+    cairo_move_to(cr, tx, ty);
+    cairo_curve_to(cr, c1x, c1y, lx, ly, lx, ly);
+    cairo_line_to(cr, nx, ny);
+    cairo_line_to(cr, rx, ry);
+    cairo_curve_to(cr, rx, ry, c2x, c2y, tx, ty);
+    cairo_close_path(cr);
+}
+
 void DrawArrows(cairo_t* cr, const render::Camera& camera, const std::vector<LivePlayer>& players, const Settings& settings) {
-    if (!settings::Enabled(settings.arrows) || !camera.valid) return;
+    static std::unordered_map<uintptr_t, ArrowState> states;
+    static auto last = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    double dt = std::clamp(std::chrono::duration<double>(now - last).count(), 0.0, 0.1);
+    last = now;
+    bool enabled = settings::Enabled(settings.arrows) && camera.valid;
     double cx = camera.width * 0.5, cy = camera.height * 0.5;
     double radius = std::clamp(settings.arrows_radius, 40, 500);
-    double size = std::clamp(settings.arrows_size, 6, 32);
+    double base_size = std::clamp(settings.arrows_size, 6, 32);
     Rgb color = UnpackRgb(settings.arrows_rgba);
     double color_alpha = (settings.arrows_rgba & 0xFF) / 255.0;
     int local_team = g_hud.local_team.load();
-    for (const LivePlayer& player : players) {
-        if (!player.Enemy(local_team)) continue;
-        float sx, sy;
-        Vec3 chest{player.origin.x, player.origin.y, player.origin.z + 40.f};
-        if (camera.Project(chest, sx, sy) && sx >= 0 && sx <= camera.width && sy >= 0 && sy <= camera.height) continue;
-        double target_yaw = std::atan2(player.origin.y - camera.eye.y, player.origin.x - camera.eye.x) * 180.0 / kPi;
-        double relative = std::remainder(target_yaw - camera.angles.y, 360.0);
-        double angle = (-relative - 90.0) * kPi / 180.0;
-        double px = cx + radius * std::cos(angle), py = cy + radius * std::sin(angle);
-        cairo_new_path(cr);
-        cairo_move_to(cr, px + size * std::cos(angle), py + size * std::sin(angle));
-        cairo_line_to(cr, px + size * 0.7 * std::cos(angle + 2.4), py + size * 0.7 * std::sin(angle + 2.4));
-        cairo_line_to(cr, px + size * 0.7 * std::cos(angle - 2.4), py + size * 0.7 * std::sin(angle - 2.4));
-        cairo_close_path(cr);
-        cairo_set_source_rgba(cr, color.r, color.g, color.b, color_alpha);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgba(cr, 0, 0, 0, 0.9);
-        cairo_set_line_width(cr, 1.2);
-        cairo_stroke(cr);
+    double pulse = 0.5 + 0.5 * std::sin(std::chrono::duration<double>(now.time_since_epoch()).count() * 6.0);
+
+    for (auto& [pawn, state] : states) state.live = false;
+    if (enabled) {
+        for (const LivePlayer& player : players) {
+            if (!player.Enemy(local_team) || !player.info.pawn) continue;
+            float sx, sy;
+            Vec3 chest{player.origin.x, player.origin.y, player.origin.z + 40.f};
+            if (camera.Project(chest, sx, sy) && sx >= 0 && sx <= camera.width && sy >= 0 && sy <= camera.height) continue;
+            double target_yaw = std::atan2(player.origin.y - camera.eye.y, player.origin.x - camera.eye.x) * 180.0 / kPi;
+            double relative = std::remainder(target_yaw - camera.angles.y, 360.0);
+            double angle = (-relative - 90.0) * kPi / 180.0;
+            double distance = std::hypot(player.origin.x - camera.eye.x, player.origin.y - camera.eye.y);
+            auto [it, inserted] = states.try_emplace(player.info.pawn);
+            ArrowState& state = it->second;
+            if (inserted || state.alpha <= 0.01) state.angle = angle;
+            double delta = std::remainder(angle - state.angle, 2 * kPi);
+            state.angle += delta * (1.0 - std::exp(-18.0 * dt));
+            double target_size = std::clamp(1.2 - distance / 2600.0, 0.72, 1.2);
+            state.size += (target_size - state.size) * (1.0 - std::exp(-8.0 * dt));
+            state.live = true;
+            double visibility = player.info.spotted_valid && player.info.visible ? 1.0 : 0.7;
+            double close = distance < 520.0 ? 1.0 : 0.0;
+            state.alpha = std::min(1.0, state.alpha + dt * 6.0);
+
+            double a = state.alpha * color_alpha * visibility;
+            double size = base_size * state.size * (1.0 + close * 0.12 * pulse);
+            double px = cx + radius * std::cos(state.angle), py = cy + radius * std::sin(state.angle);
+
+            for (int i = 3; i >= 1; i--) {
+                ArrowPath(cr, px, py, state.angle, size + i * 2.2);
+                cairo_set_source_rgba(cr, color.r, color.g, color.b, a * 0.07 * (close ? 1.0 + pulse : 1.0));
+                cairo_fill(cr);
+            }
+            ArrowPath(cr, px, py, state.angle, size);
+            double tip_x = px + size * std::cos(state.angle), tip_y = py + size * std::sin(state.angle);
+            double back_x = px - size * 0.6 * std::cos(state.angle), back_y = py - size * 0.6 * std::sin(state.angle);
+            cairo_pattern_t* fill = cairo_pattern_create_linear(back_x, back_y, tip_x, tip_y);
+            cairo_pattern_add_color_stop_rgba(fill, 0.0, color.r * 0.7, color.g * 0.7, color.b * 0.7, a * 0.85);
+            cairo_pattern_add_color_stop_rgba(fill, 1.0, std::min(1.0, color.r + 0.25), std::min(1.0, color.g + 0.25), std::min(1.0, color.b + 0.25), a);
+            cairo_set_source(cr, fill);
+            cairo_fill_preserve(cr);
+            cairo_pattern_destroy(fill);
+            cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+            cairo_set_line_width(cr, 1.0);
+            cairo_set_source_rgba(cr, 1, 1, 1, a * 0.35);
+            cairo_stroke(cr);
+        }
+    }
+    for (auto it = states.begin(); it != states.end();) {
+        ArrowState& state = it->second;
+        if (!state.live) {
+            state.alpha -= dt * 6.0;
+            if (state.alpha <= 0.0) { it = states.erase(it); continue; }
+            double a = state.alpha * color_alpha * 0.7;
+            double size = base_size * state.size;
+            double px = cx + radius * std::cos(state.angle), py = cy + radius * std::sin(state.angle);
+            ArrowPath(cr, px, py, state.angle, size);
+            cairo_set_source_rgba(cr, color.r, color.g, color.b, a);
+            cairo_fill(cr);
+        }
+        ++it;
     }
 }
 

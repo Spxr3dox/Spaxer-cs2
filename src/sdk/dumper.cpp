@@ -1,3 +1,4 @@
+#include <chrono>
 #include "dumper.h"
 #include "offsets.h"
 #include "memory/process.h"
@@ -341,8 +342,12 @@ static void LoadCache() {
 }
 
 static bool ProbeSmokeOffsets() {
-    if (off::m_bDidSmokeEffect && off::m_vSmokeColor && off::m_iPing) return true;
+    if (off::m_bDidSmokeEffect && off::m_vSmokeColor) return true;
     if (!off::g_SchemaBase) return false;
+    static auto s_next_attempt = std::chrono::steady_clock::time_point{};
+    auto now = std::chrono::steady_clock::now();
+    if (now < s_next_attempt) return false;
+    s_next_attempt = now + std::chrono::seconds(10);
 
     char mempath[64];
     snprintf(mempath, sizeof(mempath), "/proc/%d/mem", g_proc.pid());

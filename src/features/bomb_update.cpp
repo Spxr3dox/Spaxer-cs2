@@ -1,6 +1,7 @@
 #include "state.h"
 #include "sdk/game.h"
 #include "memory/process.h"
+#include "config/settings.h"
 #include <chrono>
 
 HudState g_hud;
@@ -77,6 +78,11 @@ void UpdateBomb() {
             if (d_remain < 0.f) d_remain = 0.f;
         } else {
             s_was_defusing = false;
+        }
+        if (!g_hud.bomb_visible.load()) {
+            Settings* notify_cfg = settings::Attach();
+            if (notify_cfg && settings::Enabled(notify_cfg->notifications))
+                PushNotice(std::string("Bomb planted at ") + (site == 0 ? "A" : "B"), NoticeKind::Bomb);
         }
         g_hud.bomb_visible.store(true);
         g_hud.bomb_blow_secs.store(remain);

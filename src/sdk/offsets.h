@@ -24,6 +24,8 @@ namespace off {
 
     inline uintptr_t m_lifeState      = 0;
     inline uintptr_t m_fFlags         = 0;
+    inline uintptr_t m_MoveType       = 0x69d;
+    inline uintptr_t m_nActualMoveType = 0x69e;
     inline uintptr_t m_pGameSceneNode = 0;
     inline uintptr_t m_modelState     = 0;
     inline uintptr_t m_pWeaponServices = 0;

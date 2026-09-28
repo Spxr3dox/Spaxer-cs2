@@ -29,11 +29,14 @@ static bool IsRcsWeapon(int definition) {
     }
 }
 
+constexpr float kViewPunchScale = 2.f;
+
 static void Loop() {
     Settings* cfg = settings::Attach();
     if (!cfg) return;
 
     Vec3 previous{};
+    float remainder_x = 0.f, remainder_y = 0.f;
     while (s_running.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
         uintptr_t pawn = game::LocalPawn();
@@ -53,6 +56,7 @@ static void Loop() {
         Vec3 punch = g_proc.Read<Vec3>(pawn + off::m_aimPunchAngle);
         if (shots <= 1 || !std::isfinite(punch.x) || !std::isfinite(punch.y)) {
             previous = punch;
+            remainder_x = remainder_y = 0.f;
             continue;
         }
         float sensitivity = cfg->aimbot_sens_x1000 / 1000.f;
@@ -60,9 +64,12 @@ static void Loop() {
         float strength = (weapon ? weapon->rcs_strength_x100 : cfg->rcs_strength_x100) / 100.f;
         if (strength < 0.f) strength = 0.f;
         if (strength > 1.f) strength = 1.f;
-        int dx = static_cast<int>((punch.y - previous.y) / sensitivity * 100.f * strength);
-        int dy = static_cast<int>(-(punch.x - previous.x) / sensitivity * 100.f * strength);
+        remainder_x += (punch.y - previous.y) * kViewPunchScale / sensitivity * strength;
+        remainder_y -= (punch.x - previous.x) * kViewPunchScale / sensitivity * strength;
         previous = punch;
+        int dx = static_cast<int>(remainder_x), dy = static_cast<int>(remainder_y);
+        remainder_x -= dx;
+        remainder_y -= dy;
         if (dx || dy) g_input.MouseMove(dx, dy);
     }
 }
