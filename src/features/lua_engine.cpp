@@ -1,4 +1,7 @@
 #include "features/lua_engine.h"
+#include "features/lua_compat.h"
+#include "features/lua_compat_prelude.h"
+#include "features/lua_ui_prelude.h"
 #include "features/features.h"
 #include "state.h"
 #include "config/settings.h"
@@ -97,6 +100,8 @@ static int LuaClientLog(lua_State* L) {
 }
 
 static bool RunFile(lua_State* L, const std::string& path) {
+    lua_pushstring(L, path.c_str());
+    lua_setglobal(L, "_SPX_SCRIPT");
     if (luaL_loadfile(L, path.c_str()) != 0) {
         fprintf(stderr, "[LUA] %s\n", lua_tostring(L, -1));
         lua_pop(L, 1);
@@ -939,7 +944,10 @@ void Init(Settings* cfg) {
     lua_pushcfunction(s_L, LuaRenderTriangleFilled);   lua_setfield(s_L, -2, "triangle_filled");
     lua_pushcfunction(s_L, LuaRenderMeasureText);      lua_setfield(s_L, -2, "measure_text");
     lua_pushcfunction(s_L, LuaRenderWorldToScreen);    lua_setfield(s_L, -2, "world_to_screen");
+    lua_setglobal(s_L, "_spx_draw");
+    lua_newtable(s_L);
     lua_setglobal(s_L, "render");
+    lua_compat::Register(s_L, cfg);
 
     lua_newtable(s_L);
     lua_pushcfunction(s_L, LuaEngineIsInGame);         lua_setfield(s_L, -2, "is_in_game");
@@ -1014,6 +1022,18 @@ void Init(Settings* cfg) {
     } else {
         ProtectedCall(s_L, 0, "prelude");
     }
+    if (luaL_loadstring(s_L, kCompatPrelude) != 0) {
+        fprintf(stderr, "[LUA] compat prelude: %s\n", lua_tostring(s_L, -1));
+        lua_pop(s_L, 1);
+    } else {
+        ProtectedCall(s_L, 0, "compat prelude");
+    }
+    if (luaL_loadstring(s_L, kUiPrelude) != 0) {
+        fprintf(stderr, "[LUA] ui prelude: %s\n", lua_tostring(s_L, -1));
+        lua_pop(s_L, 1);
+    } else {
+        ProtectedCall(s_L, 0, "ui prelude");
+    }
 
     std::error_code error;
     std::filesystem::create_directories(ScriptsDir(), error);
@@ -1044,7 +1064,9 @@ void DispatchPaint(cairo_t* cr, const render::Camera& camera) {
     s_camera = camera;
     if (!s_L || !cr) return;
     s_current_cr = cr;
+    lua_compat::BeginPaint(cr, s_camera);
     DispatchEvent("paint");
+    lua_compat::EndPaint();
     s_current_cr = nullptr;
 }
 
@@ -1058,6 +1080,7 @@ void DispatchFrame() {
     }
     ApplyPendingReload();
     if (!s_L) return;
+    lua_compat::DispatchGameEvents(s_L);
     DispatchEvent("frame");
 }
 

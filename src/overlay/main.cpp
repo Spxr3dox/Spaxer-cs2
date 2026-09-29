@@ -38,6 +38,7 @@
 #include <csignal>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/stat.h>
 #include <string>
 #include <ctime>
 
@@ -1852,12 +1853,21 @@ static void AutosaveConfig() {
     std::vector<char> current(bytes, bytes + sizeof(Settings));
     Settings* view = reinterpret_cast<Settings*>(current.data());
     view->edit_mode = 0;
+    view->gui_open = 0;
+    view->gui_x = view->gui_y = view->gui_w = view->gui_h = 0;
     if (name != s_name) {
         s_name = name;
         s_snapshot.swap(current);
         return;
     }
-    if (name.empty() || current == s_snapshot) return;
+    static time_t s_lua_values_mtime = 0;
+    struct stat values_stat;
+    const char* home = getenv("HOME");
+    std::string values_path = std::string(home ? home : "/tmp") + "/.config/spaxer/lua_values.txt";
+    time_t lua_values_mtime = ::stat(values_path.c_str(), &values_stat) == 0 ? values_stat.st_mtime : 0;
+    bool lua_changed = s_lua_values_mtime != 0 && lua_values_mtime != s_lua_values_mtime;
+    s_lua_values_mtime = lua_values_mtime;
+    if (name.empty() || (current == s_snapshot && !lua_changed)) return;
     if (settings::SaveConfig(name)) s_snapshot.swap(current);
 }
 

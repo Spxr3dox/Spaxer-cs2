@@ -167,4 +167,9 @@
     X(trigger_spread, Toggle) \
     X(bind_spread_trigger, Bind) \
     X(spread_coverage, Number) \
-    X(spread_head_only, Toggle)
+    X(spread_head_only, Toggle) \
+    X(gui_open, Toggle) \
+    X(gui_x, Number) \
+    X(gui_y, Number) \
+    X(gui_w, Number) \
+    X(gui_h, Number)

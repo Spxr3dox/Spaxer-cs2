@@ -25,6 +25,9 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <map>
+#include <spawn.h>
+#include <sys/stat.h>
 
 static Settings* g_cfg = nullptr;
 static GtkWidget* g_win = nullptr;
@@ -63,6 +66,16 @@ static void SetBindLabel(GtkButton* btn, uint32_t kv) {
 }
 
 static gboolean SyncWidgetsWithSettings(gpointer) {
+    if (g_win) {
+        bool visible = gtk_widget_get_visible(g_win);
+        g_cfg->gui_open = visible ? 1u : 0u;
+        if (visible) {
+            gint x = 0, y = 0, w = 0, h = 0;
+            gtk_window_get_position(GTK_WINDOW(g_win), &x, &y);
+            gtk_window_get_size(GTK_WINDOW(g_win), &w, &h);
+            g_cfg->gui_x = x; g_cfg->gui_y = y; g_cfg->gui_w = w; g_cfg->gui_h = h;
+        }
+    }
     for (const SwitchBinding& binding : g_switches) {
         bool enabled = settings::Enabled(*binding.field);
         if (gtk_switch_get_active(binding.sw) != enabled) gtk_switch_set_active(binding.sw, enabled);
@@ -757,6 +770,16 @@ static void InstallCss() {
         "stack { background: transparent; }"
         ".page { padding: 14px 16px 18px 16px; }"
         ".card { background: #11131a; border-radius: 8px; border: 1px solid #1c1f29; }"
+        ".loader-status { color: #7a7f8e; font-weight: 700; }"
+        ".loader-status.loader-on { color: #4c8dff; }"
+        "button.suggested-action { background: #4c8dff; color: #ffffff; border-color: #4c8dff; }"
+        "button.suggested-action:hover { background: #5b98ff; }"
+        ".dim-label { color: #7a7f8e; padding: 6px 14px; }"
+        "entry { background: #151823; border: 1px solid #262a3a; color: #e4e6ed; border-radius: 6px; padding: 4px 8px; min-height: 22px; }"
+        "entry:focus { border-color: #4c8dff; }"
+        "popover { background: #11131a; border: 1px solid #1c1f29; border-radius: 8px; }"
+        "popover check { min-width: 14px; min-height: 14px; }"
+        ".card > button { margin: 4px 14px; }"
         ".card-title { color: #e4e6ed; font-size: 11px; font-weight: 800; letter-spacing: 1px; padding: 10px 14px 9px 14px; border-bottom: 1px solid #1a1c25; margin-bottom: 4px; }"
         ".preview { margin: 6px 10px 10px 10px; border-radius: 6px; }"
         ".row { padding: 6px 14px; }"
@@ -1028,6 +1051,504 @@ static void PopulateScriptsList(GtkBox* target) {
     gtk_widget_show_all(GTK_WIDGET(target));
 }
 
+extern char** environ;
+
+static std::string SpaxerConfigPath(const char* file) {
+    const char* home = getenv("HOME");
+    return std::string(home ? home : "/tmp") + "/.config/spaxer/" + file;
+}
+
+struct LuaUiElement {
+    std::string script;
+    std::string kind;
+    std::string name;
+    bool visible = true;
+    std::vector<std::string> args;
+};
+
+static std::vector<std::string> SplitString(const std::string& text, char separator) {
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (true) {
+        size_t end = text.find(separator, start);
+        parts.push_back(text.substr(start, end == std::string::npos ? std::string::npos : end - start));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return parts;
+}
+
+static std::vector<LuaUiElement> ReadLuaSchema() {
+    std::vector<LuaUiElement> elements;
+    std::ifstream file(SpaxerConfigPath("lua_ui.txt"));
+    std::string line;
+    while (std::getline(file, line)) {
+        std::vector<std::string> fields = SplitString(line, '\t');
+        if (fields.size() < 4) continue;
+        LuaUiElement element{fields[0], fields[1], fields[2], fields[3] == "1", {}};
+        element.args.assign(fields.begin() + 4, fields.end());
+        elements.push_back(std::move(element));
+    }
+    return elements;
+}
+
+static std::map<std::string, std::string> ReadLuaValues() {
+    std::map<std::string, std::string> values;
+    std::ifstream file(SpaxerConfigPath("lua_values.txt"));
+    std::string line;
+    while (std::getline(file, line)) {
+        size_t first = line.find('\t');
+        size_t second = first == std::string::npos ? std::string::npos : line.find('\t', first + 1);
+        if (second == std::string::npos) continue;
+        values[line.substr(0, second)] = line.substr(second + 1);
+    }
+    return values;
+}
+
+static void WriteLuaValue(const std::string& key, const std::string& value) {
+    std::map<std::string, std::string> values = ReadLuaValues();
+    values[key] = value;
+    std::string path = SpaxerConfigPath("lua_values.txt");
+    std::string tmp = path + ".gui";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        for (const auto& [k, v] : values) out << k << '\t' << v << '\n';
+    }
+    std::rename(tmp.c_str(), path.c_str());
+}
+
+struct LuaWidget {
+    std::string key;
+    std::string kind;
+    GtkWidget* widget;
+    std::vector<std::string> items;
+    std::vector<GtkWidget*> checks;
+};
+
+static std::vector<LuaWidget> g_lua_widgets;
+static GtkWidget* g_lua_panel = nullptr;
+static time_t g_lua_schema_mtime = 0;
+static time_t g_lua_values_mtime = 0;
+static bool g_lua_updating = false;
+
+static time_t FileMtime(const std::string& path) {
+    struct stat st;
+    return stat(path.c_str(), &st) == 0 ? st.st_mtime : 0;
+}
+
+static std::string* LuaKey(GtkWidget* widget, const std::string& key) {
+    std::string* stored = new std::string(key);
+    g_signal_connect(widget, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer p) { delete static_cast<std::string*>(p); }), stored);
+    return stored;
+}
+
+static GtkWidget* LuaRow(const std::string& label) {
+    GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_style_context_add_class(gtk_widget_get_style_context(row), "row");
+    GtkWidget* lbl = gtk_label_new(label.c_str());
+    gtk_label_set_xalign(GTK_LABEL(lbl), 0.f);
+    gtk_widget_set_hexpand(lbl, TRUE);
+    gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
+    gtk_box_pack_start(GTK_BOX(row), lbl, TRUE, TRUE, 0);
+    return row;
+}
+
+static std::string LuaKeyName(guint keyval) {
+    const char* name = gdk_keyval_name(keyval);
+    std::string upper = name ? name : "";
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return std::toupper(c); });
+    return upper;
+}
+
+static std::string LuaBindLabel(const std::string& value) {
+    size_t bar = value.find('|');
+    std::string key = value.substr(0, bar);
+    std::string mode = bar == std::string::npos ? "hold" : value.substr(bar + 1);
+    if (mode == "always") return "always";
+    return (key.empty() ? std::string("bind") : key) + (mode == "toggle" ? " · toggle" : "");
+}
+
+static void FinishLuaBind(GtkWidget* button, const std::string& key_name) {
+    std::string* key = static_cast<std::string*>(g_object_get_data(G_OBJECT(button), "lua-key"));
+    std::string current = ReadLuaValues()[*key];
+    size_t bar = current.find('|');
+    std::string mode = bar == std::string::npos ? "hold" : current.substr(bar + 1);
+    std::string value = key_name + "|" + mode;
+    WriteLuaValue(*key, value);
+    gtk_button_set_label(GTK_BUTTON(button), LuaBindLabel(value).c_str());
+    g_capturing_bind = false;
+}
+
+static gboolean OnLuaBindKey(GtkWidget* top, GdkEventKey* event, gpointer button) {
+    guint kv = event->keyval, base = 0;
+    if (gdk_keymap_translate_keyboard_state(gdk_keymap_get_for_display(gdk_display_get_default()), event->hardware_keycode,
+                                            GdkModifierType(0), 0, &base, nullptr, nullptr, nullptr) && base)
+        kv = gdk_keyval_to_lower(base);
+    g_signal_handlers_disconnect_matched(top, G_SIGNAL_MATCH_DATA, 0, 0, nullptr, nullptr, button);
+    FinishLuaBind(GTK_WIDGET(button), kv == GDK_KEY_Escape ? "" : LuaKeyName(kv));
+    return TRUE;
+}
+
+static gboolean OnLuaBindMouse(GtkWidget* top, GdkEventButton* event, gpointer button) {
+    static const std::pair<guint, const char*> kButtons[] = {{2, "MOUSE2"}, {3, "MOUSE3"}, {8, "MOUSE4"}, {9, "MOUSE5"}};
+    for (const auto& [gtk_button, name] : kButtons) {
+        if (event->button != gtk_button) continue;
+        g_signal_handlers_disconnect_matched(top, G_SIGNAL_MATCH_DATA, 0, 0, nullptr, nullptr, button);
+        FinishLuaBind(GTK_WIDGET(button), name);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static GtkWidget* MakeLuaBindButton(const std::string& key) {
+    GtkWidget* button = gtk_button_new_with_label(LuaBindLabel(ReadLuaValues()[key]).c_str());
+    gtk_style_context_add_class(gtk_widget_get_style_context(button), "bind");
+    gtk_widget_set_size_request(button, 78, 26);
+    gtk_widget_set_valign(button, GTK_ALIGN_CENTER);
+    g_object_set_data(G_OBJECT(button), "lua-key", LuaKey(button, key));
+    g_signal_connect(button, "clicked", G_CALLBACK(+[](GtkButton* b, gpointer) {
+        gtk_button_set_label(b, "…");
+        g_capturing_bind = true;
+        GtkWidget* top = gtk_widget_get_toplevel(GTK_WIDGET(b));
+        g_signal_connect(top, "key-press-event", G_CALLBACK(OnLuaBindKey), b);
+        g_signal_connect(top, "button-press-event", G_CALLBACK(OnLuaBindMouse), b);
+    }), nullptr);
+    g_signal_connect(button, "button-press-event", G_CALLBACK(+[](GtkWidget* b, GdkEventButton* event, gpointer) -> gboolean {
+        if (event->button != 3 || g_capturing_bind) return FALSE;
+        GtkWidget* menu = gtk_menu_new();
+        for (const char* mode : {"hold", "toggle", "always"}) {
+            GtkWidget* item = gtk_menu_item_new_with_label(mode);
+            g_object_set_data(G_OBJECT(item), "lua-bind-button", b);
+            g_signal_connect(item, "activate", G_CALLBACK(+[](GtkMenuItem* menu_item, gpointer) {
+                GtkWidget* bind_button = GTK_WIDGET(g_object_get_data(G_OBJECT(menu_item), "lua-bind-button"));
+                std::string* key = static_cast<std::string*>(g_object_get_data(G_OBJECT(bind_button), "lua-key"));
+                std::string current = ReadLuaValues()[*key];
+                std::string value = current.substr(0, current.find('|')) + "|" + gtk_menu_item_get_label(menu_item);
+                WriteLuaValue(*key, value);
+                gtk_button_set_label(GTK_BUTTON(bind_button), LuaBindLabel(value).c_str());
+            }), nullptr);
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+        }
+        gtk_widget_show_all(menu);
+        gtk_menu_popup_at_pointer(GTK_MENU(menu), reinterpret_cast<GdkEvent*>(event));
+        return TRUE;
+    }), nullptr);
+    return button;
+}
+
+static std::string MultiLabel(const std::vector<std::string>& items, const std::string& value) {
+    std::string label;
+    for (const std::string& index : SplitString(value, ',')) {
+        if (index.empty()) continue;
+        size_t i = static_cast<size_t>(std::atoi(index.c_str()));
+        if (i >= items.size()) continue;
+        if (!label.empty()) label += ", ";
+        label += items[i];
+    }
+    return label.empty() ? "none" : label;
+}
+
+static void RefreshLuaValues() {
+    std::map<std::string, std::string> values = ReadLuaValues();
+    g_lua_updating = true;
+    for (LuaWidget& w : g_lua_widgets) {
+        auto it = values.find(w.key);
+        if (it == values.end()) continue;
+        const std::string& value = it->second;
+        if (w.kind == "checkbox") gtk_switch_set_active(GTK_SWITCH(w.widget), value == "1");
+        else if (w.kind == "slider") gtk_range_set_value(GTK_RANGE(w.widget), std::atof(value.c_str()));
+        else if (w.kind == "combo") gtk_combo_box_set_active(GTK_COMBO_BOX(w.widget), std::atoi(value.c_str()));
+        else if (w.kind == "color") {
+            int r = 255, g = 255, b = 255, a = 255;
+            sscanf(value.c_str(), "%d,%d,%d,%d", &r, &g, &b, &a);
+            GdkRGBA rgba{r / 255.0, g / 255.0, b / 255.0, a / 255.0};
+            gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(w.widget), &rgba);
+        } else if (w.kind == "bind" && !g_capturing_bind) gtk_button_set_label(GTK_BUTTON(w.widget), LuaBindLabel(value).c_str());
+        else if (w.kind == "input" && !gtk_widget_has_focus(w.widget) && value != gtk_entry_get_text(GTK_ENTRY(w.widget)))
+            gtk_entry_set_text(GTK_ENTRY(w.widget), value.c_str());
+        else if (w.kind == "multi") {
+            std::vector<std::string> selected = SplitString(value, ',');
+            for (size_t i = 0; i < w.checks.size(); i++)
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w.checks[i]),
+                                             std::find(selected.begin(), selected.end(), std::to_string(i)) != selected.end());
+            gtk_button_set_label(GTK_BUTTON(w.widget), MultiLabel(w.items, value).c_str());
+        }
+    }
+    g_lua_updating = false;
+}
+
+static GtkWidget* BuildLuaElement(const LuaUiElement& element, const std::string& key) {
+    const auto& a = element.args;
+    if (element.kind == "label") {
+        GtkWidget* label = gtk_label_new(element.name.c_str());
+        gtk_label_set_xalign(GTK_LABEL(label), 0.f);
+        gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+        gtk_style_context_add_class(gtk_widget_get_style_context(label), "dim-label");
+        return label;
+    }
+    if (element.kind == "button") {
+        GtkWidget* button = gtk_button_new_with_label(element.name.c_str());
+        g_signal_connect(button, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
+            const std::string& k = *static_cast<std::string*>(p);
+            WriteLuaValue(k, std::to_string(std::atol(ReadLuaValues()[k].c_str()) + 1));
+        }), LuaKey(button, key));
+        return button;
+    }
+    GtkWidget* row = LuaRow(element.name);
+    GtkWidget* control = nullptr;
+    LuaWidget record{key, element.kind, nullptr, {}, {}};
+    if (element.kind == "checkbox") {
+        control = gtk_switch_new();
+        g_signal_connect(control, "state-set", G_CALLBACK(+[](GtkSwitch*, gboolean state, gpointer p) -> gboolean {
+            if (!g_lua_updating) WriteLuaValue(*static_cast<std::string*>(p), state ? "1" : "0");
+            return FALSE;
+        }), LuaKey(control, key));
+    } else if (element.kind == "slider" && a.size() >= 3) {
+        double min = std::atof(a[0].c_str()), max = std::atof(a[1].c_str()), step = std::max(1e-6, std::atof(a[2].c_str()));
+        control = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, min, max, step);
+        gtk_scale_set_digits(GTK_SCALE(control), step >= 1 ? 0 : (step >= 0.1 ? 1 : 2));
+        gtk_scale_set_value_pos(GTK_SCALE(control), GTK_POS_RIGHT);
+        gtk_widget_set_size_request(control, 170, -1);
+        if (a.size() >= 4 && !a[3].empty()) {
+            g_object_set_data_full(G_OBJECT(control), "suffix", g_strdup(a[3].c_str()), g_free);
+            g_signal_connect(control, "format-value", G_CALLBACK(+[](GtkScale* scale, gdouble value, gpointer) -> gchar* {
+                const char* suffix = static_cast<const char*>(g_object_get_data(G_OBJECT(scale), "suffix"));
+                return g_strdup_printf("%.*f%s", gtk_scale_get_digits(scale), value, suffix ? suffix : "");
+            }), nullptr);
+        }
+        g_signal_connect(control, "value-changed", G_CALLBACK(+[](GtkRange* range, gpointer p) {
+            if (g_lua_updating) return;
+            char text[64];
+            snprintf(text, sizeof(text), "%.4g", gtk_range_get_value(range));
+            for (char* c = text; *c; ++c) if (*c == ',') *c = '.';
+            WriteLuaValue(*static_cast<std::string*>(p), text);
+        }), LuaKey(control, key));
+    } else if (element.kind == "combo" && !a.empty()) {
+        control = gtk_combo_box_text_new();
+        for (const std::string& item : SplitString(a[0], '|')) gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(control), item.c_str());
+        gtk_widget_set_valign(control, GTK_ALIGN_CENTER);
+        g_signal_connect(control, "changed", G_CALLBACK(+[](GtkComboBox* combo, gpointer p) {
+            if (!g_lua_updating && gtk_combo_box_get_active(combo) >= 0)
+                WriteLuaValue(*static_cast<std::string*>(p), std::to_string(gtk_combo_box_get_active(combo)));
+        }), LuaKey(control, key));
+    } else if (element.kind == "multi" && !a.empty()) {
+        record.items = SplitString(a[0], '|');
+        control = gtk_menu_button_new();
+        gtk_widget_set_valign(control, GTK_ALIGN_CENTER);
+        GtkWidget* popover = gtk_popover_new(control);
+        GtkWidget* list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+        gtk_container_set_border_width(GTK_CONTAINER(list), 8);
+        std::string* stored_key = LuaKey(control, key);
+        for (size_t i = 0; i < record.items.size(); i++) {
+            GtkWidget* check = gtk_check_button_new_with_label(record.items[i].c_str());
+            g_object_set_data(G_OBJECT(check), "lua-list", list);
+            g_object_set_data(G_OBJECT(check), "lua-key", stored_key);
+            g_signal_connect(check, "toggled", G_CALLBACK(+[](GtkToggleButton* toggled, gpointer) {
+                if (g_lua_updating) return;
+                GtkWidget* container = GTK_WIDGET(g_object_get_data(G_OBJECT(toggled), "lua-list"));
+                std::string value;
+                GList* children = gtk_container_get_children(GTK_CONTAINER(container));
+                int index = 0;
+                for (GList* it = children; it; it = it->next, index++) {
+                    if (!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(it->data))) continue;
+                    if (!value.empty()) value += ",";
+                    value += std::to_string(index);
+                }
+                g_list_free(children);
+                WriteLuaValue(*static_cast<std::string*>(g_object_get_data(G_OBJECT(toggled), "lua-key")), value);
+            }), nullptr);
+            gtk_box_pack_start(GTK_BOX(list), check, FALSE, FALSE, 0);
+            record.checks.push_back(check);
+        }
+        gtk_widget_show_all(list);
+        gtk_container_add(GTK_CONTAINER(popover), list);
+        gtk_menu_button_set_popover(GTK_MENU_BUTTON(control), popover);
+    } else if (element.kind == "color") {
+        control = gtk_color_button_new();
+        gtk_color_chooser_set_use_alpha(GTK_COLOR_CHOOSER(control), TRUE);
+        gtk_widget_set_valign(control, GTK_ALIGN_CENTER);
+        g_signal_connect(control, "color-set", G_CALLBACK(+[](GtkColorButton* button, gpointer p) {
+            GdkRGBA rgba;
+            gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(button), &rgba);
+            char text[48];
+            snprintf(text, sizeof(text), "%d,%d,%d,%d", static_cast<int>(std::lround(rgba.red * 255)), static_cast<int>(std::lround(rgba.green * 255)),
+                     static_cast<int>(std::lround(rgba.blue * 255)), static_cast<int>(std::lround(rgba.alpha * 255)));
+            WriteLuaValue(*static_cast<std::string*>(p), text);
+        }), LuaKey(control, key));
+    } else if (element.kind == "bind") {
+        control = MakeLuaBindButton(key);
+    } else if (element.kind == "input") {
+        control = gtk_entry_new();
+        gtk_widget_set_size_request(control, 150, -1);
+        gtk_widget_set_valign(control, GTK_ALIGN_CENTER);
+        g_signal_connect(control, "changed", G_CALLBACK(+[](GtkEditable* editable, gpointer p) {
+            if (!g_lua_updating) WriteLuaValue(*static_cast<std::string*>(p), gtk_entry_get_text(GTK_ENTRY(editable)));
+        }), LuaKey(control, key));
+    }
+    if (!control) return row;
+    gtk_widget_set_valign(control, GTK_ALIGN_CENTER);
+    gtk_box_pack_start(GTK_BOX(row), control, element.kind == "slider", element.kind == "slider", 0);
+    record.widget = control;
+    g_lua_widgets.push_back(std::move(record));
+    return row;
+}
+
+static void BuildLuaPanel() {
+    if (!g_lua_panel) return;
+    GList* children = gtk_container_get_children(GTK_CONTAINER(g_lua_panel));
+    for (GList* it = children; it; it = it->next) gtk_widget_destroy(GTK_WIDGET(it->data));
+    g_list_free(children);
+    g_lua_widgets.clear();
+
+    std::vector<LuaUiElement> elements = ReadLuaSchema();
+    std::vector<std::string> scripts;
+    for (const LuaUiElement& element : elements)
+        if (element.visible && std::find(scripts.begin(), scripts.end(), element.script) == scripts.end()) scripts.push_back(element.script);
+
+    for (const std::string& script : scripts) {
+        std::string title = script;
+        std::transform(title.begin(), title.end(), title.begin(), [](unsigned char c) { return std::toupper(c); });
+        GtkWidget* card = MakeCard(title.c_str());
+        for (const LuaUiElement& element : elements)
+            if (element.script == script && element.visible)
+                gtk_box_pack_start(GTK_BOX(card), BuildLuaElement(element, element.script + "\t" + element.name), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(g_lua_panel), card, FALSE, FALSE, 0);
+    }
+    if (scripts.empty()) {
+        GtkWidget* card = MakeCard("SCRIPT SETTINGS");
+        GtkWidget* hint = gtk_label_new("Scripts can add their own settings here with ui.checkbox, ui.slider, ui.combo, ui.color, ui.bind and ui.button.");
+        gtk_label_set_xalign(GTK_LABEL(hint), 0.f);
+        gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
+        gtk_style_context_add_class(gtk_widget_get_style_context(hint), "dim-label");
+        gtk_box_pack_start(GTK_BOX(card), hint, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(g_lua_panel), card, FALSE, FALSE, 0);
+    }
+    RefreshLuaValues();
+    gtk_widget_show_all(g_lua_panel);
+}
+
+static gboolean LuaPanelTick(gpointer) {
+    time_t schema = FileMtime(SpaxerConfigPath("lua_ui.txt"));
+    time_t values = FileMtime(SpaxerConfigPath("lua_values.txt"));
+    if (schema != g_lua_schema_mtime) {
+        g_lua_schema_mtime = schema;
+        g_lua_values_mtime = values;
+        BuildLuaPanel();
+    } else if (values != g_lua_values_mtime) {
+        g_lua_values_mtime = values;
+        RefreshLuaValues();
+    }
+    return G_SOURCE_CONTINUE;
+}
+
+static pid_t FindOverlayPid() {
+    namespace fs = std::filesystem;
+    std::error_code error;
+    for (const auto& entry : fs::directory_iterator("/proc", error)) {
+        std::string pid = entry.path().filename().string();
+        if (pid.empty() || !std::isdigit(static_cast<unsigned char>(pid[0]))) continue;
+        std::ifstream comm(entry.path() / "comm");
+        std::string name;
+        if (std::getline(comm, name) && name == "spaxer") return static_cast<pid_t>(std::atoi(pid.c_str()));
+    }
+    return 0;
+}
+
+static std::string OverlayBinary() {
+    char self[4096] = {};
+    ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (n <= 0) return "spaxer";
+    return (std::filesystem::path(std::string(self, n)).parent_path() / "spaxer").string();
+}
+
+static void InjectOverlay() {
+    if (FindOverlayPid()) return;
+    std::string binary = OverlayBinary();
+    std::string dir = std::filesystem::path(binary).parent_path().string();
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addchdir_np(&actions, dir.c_str());
+    posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, 1, "/tmp/spaxer_overlay.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    posix_spawn_file_actions_adddup2(&actions, 1, 2);
+    posix_spawnattr_t attributes;
+    posix_spawnattr_init(&attributes);
+    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSID);
+    char* argv[] = {binary.data(), nullptr};
+    pid_t child = 0;
+    posix_spawn(&child, binary.c_str(), &actions, &attributes, argv, environ);
+    posix_spawnattr_destroy(&attributes);
+    posix_spawn_file_actions_destroy(&actions);
+}
+
+static void UnloadOverlay() {
+    if (pid_t pid = FindOverlayPid()) kill(pid, SIGTERM);
+}
+
+static void RestartOverlay() {
+    pid_t pid = FindOverlayPid();
+    if (!pid) {
+        InjectOverlay();
+        return;
+    }
+    kill(pid, SIGTERM);
+    struct RestartState { pid_t pid; int ticks; };
+    g_timeout_add(100, +[](gpointer data) -> gboolean {
+        auto* state = static_cast<RestartState*>(data);
+        bool alive = kill(state->pid, 0) == 0 && FindOverlayPid() == state->pid;
+        if (alive && ++state->ticks == 40) kill(state->pid, SIGKILL);
+        if (alive && state->ticks < 60) return G_SOURCE_CONTINUE;
+        delete state;
+        InjectOverlay();
+        return G_SOURCE_REMOVE;
+    }, new RestartState{pid, 0});
+}
+
+static GtkWidget* g_loader_status = nullptr;
+
+static void UpdateLoaderStatus() {
+    if (!g_loader_status) return;
+    pid_t pid = FindOverlayPid();
+    std::string text = pid ? "Injected · pid " + std::to_string(pid) : std::string("Not injected");
+    if (text != gtk_label_get_text(GTK_LABEL(g_loader_status))) gtk_label_set_text(GTK_LABEL(g_loader_status), text.c_str());
+    GtkStyleContext* style = gtk_widget_get_style_context(g_loader_status);
+    if (pid) gtk_style_context_add_class(style, "loader-on");
+    else gtk_style_context_remove_class(style, "loader-on");
+}
+
+static GtkWidget* MakeLoaderCard() {
+    GtkWidget* card = MakeCard("LOADER");
+    GtkWidget* status_row = LuaRow("Spaxer");
+    g_loader_status = gtk_label_new("");
+    gtk_style_context_add_class(gtk_widget_get_style_context(g_loader_status), "loader-status");
+    g_signal_connect(g_loader_status, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer) { g_loader_status = nullptr; }), nullptr);
+    gtk_box_pack_start(GTK_BOX(status_row), g_loader_status, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(card), status_row, FALSE, FALSE, 0);
+
+    GtkWidget* buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_style_context_add_class(gtk_widget_get_style_context(buttons), "row");
+    GtkWidget* inject = gtk_button_new_with_label("Inject");
+    GtkWidget* unload = gtk_button_new_with_label("Unload");
+    GtkWidget* restart = gtk_button_new_with_label("Restart");
+    gtk_style_context_add_class(gtk_widget_get_style_context(inject), "suggested-action");
+    g_signal_connect(inject, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) { InjectOverlay(); }), nullptr);
+    g_signal_connect(unload, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) { UnloadOverlay(); }), nullptr);
+    g_signal_connect(restart, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) { RestartOverlay(); }), nullptr);
+    for (GtkWidget* button : {inject, unload, restart}) gtk_box_pack_start(GTK_BOX(buttons), button, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(card), buttons, FALSE, FALSE, 0);
+
+    GtkWidget* launch = gtk_button_new_with_label("Launch CS2");
+    g_signal_connect(launch, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
+        g_app_info_launch_default_for_uri("steam://rungameid/730", nullptr, nullptr);
+    }), nullptr);
+    GtkWidget* launch_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_style_context_add_class(gtk_widget_get_style_context(launch_row), "row");
+    gtk_box_pack_start(GTK_BOX(launch_row), launch, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(card), launch_row, FALSE, FALSE, 0);
+    UpdateLoaderStatus();
+    return card;
+}
+
 static GtkWidget* BuildGui() {
     for (BindCtx* ctx : g_bind_buttons) delete ctx;
     g_bind_buttons.clear();
@@ -1286,6 +1807,7 @@ static GtkWidget* BuildGui() {
     AddSidebarItemSvg(sidebar, s_svg_world.c_str(), "render-world", "World");
     {
         GtkWidget* page = MakePage();
+        Place(page, MakeLoaderCard(), false);
         GtkWidget* uns = MakeCard("UNSAFE (memory writes)");
         gtk_box_pack_start(GTK_BOX(uns), MakeRow("Thirdperson",   &g_cfg->thirdperson,          &g_cfg->bind_thirdperson), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(uns), MakeRow("No flash",      &g_cfg->no_flash,             nullptr), FALSE, FALSE, 0);
@@ -1347,7 +1869,14 @@ static GtkWidget* BuildGui() {
         }), list_box);
 
         gtk_box_pack_start(GTK_BOX(box), card, FALSE, FALSE, 0);
-        gtk_widget_destroy(GTK_WIDGET(g_object_get_data(G_OBJECT(page), "right")));
+        g_lua_panel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+        g_signal_connect(g_lua_panel, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer) {
+            g_lua_panel = nullptr;
+            g_lua_widgets.clear();
+        }), nullptr);
+        Place(page, g_lua_panel, true);
+        g_lua_schema_mtime = 0;
+        LuaPanelTick(nullptr);
         gtk_stack_add_named(GTK_STACK(g_stack), page, "scripts");
         AddSidebarItemSvg(sidebar, s_svg_scripts.c_str(), "scripts", "Scripts");
     }
@@ -1468,6 +1997,8 @@ int main(int argc, char** argv) {
     sigaction(SIGUSR1, &sa, nullptr);
     g_timeout_add(50, CheckToggleFlag, nullptr);
     g_timeout_add(200, SyncWidgetsWithSettings, nullptr);
+    g_timeout_add(300, LuaPanelTick, nullptr);
+    g_timeout_add(500, +[](gpointer) -> gboolean { UpdateLoaderStatus(); return G_SOURCE_CONTINUE; }, nullptr);
     InstallCss();
     g_win = BuildGui();
     gtk_widget_show_all(g_win);

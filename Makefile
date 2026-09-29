@@ -3,8 +3,8 @@ CXXFLAGS := -std=c++20 -O2 -fopenmp -pipe -Wall -Wextra -Wno-unused-parameter -W
 
 INCLUDES := -Isrc
 
-PKG_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 gtk-layer-shell-0 cairo x11 xtst xfixes luajit wayland-client)
-PKG_LIBS   := $(shell pkg-config --libs   gtk+-3.0 gtk-layer-shell-0 cairo x11 xtst xfixes luajit wayland-client)
+PKG_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 gtk-layer-shell-0 cairo x11 xtst xfixes luajit wayland-client fontconfig gdk-pixbuf-2.0)
+PKG_LIBS   := $(shell pkg-config --libs   gtk+-3.0 gtk-layer-shell-0 cairo x11 xtst xfixes luajit wayland-client fontconfig gdk-pixbuf-2.0)
 
 GUI_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 x11)
 GUI_LIBS   := $(shell pkg-config --libs   gtk+-3.0 x11)
@@ -31,6 +31,7 @@ SRC := \
   src/features/sound_esp.cpp \
   src/features/movement.cpp \
   src/features/lua_engine.cpp \
+  src/features/lua_compat.cpp \
   src/render/camera.cpp \
   src/render/esp_icons.cpp \
   src/render/model_chams.cpp \

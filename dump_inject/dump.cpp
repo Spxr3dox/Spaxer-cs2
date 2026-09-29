@@ -139,7 +139,7 @@ static std::string SafeStr(uintptr_t addr) {
     return buf;
 }
 
-struct Field { std::string name; uint32_t offset; };
+struct Field { std::string name; uint32_t offset; std::string type; };
 
 static std::vector<Field> DumpClass(void* scope, const char* className) {
     std::vector<Field> out;
@@ -164,7 +164,9 @@ static std::vector<Field> DumpClass(void* scope, const char* className) {
                 int32_t fOff = ReadSafe<int32_t>(fAddr + 0x10);
                 std::string name = SafeStr(namePtr);
                 if (name.empty()) continue;
-                out.push_back({name, (uint32_t)fOff});
+                uintptr_t typePtr = ReadSafe<uintptr_t>(fAddr + 0x8);
+                std::string type = typePtr > 0x10000 ? SafeStr(ReadSafe<uintptr_t>(typePtr + 0x8)) : "";
+                out.push_back({name, (uint32_t)fOff, type});
             }
             if (!out.empty()) return out;
         }
@@ -254,6 +256,37 @@ static bool DoDump() {
 
     if (found.empty()) return false;
     L("[inject] found %zu fields\n", found.size());
+
+    static const char* kSchemaClasses[] = {
+        "CEntityInstance", "C_BaseEntity", "C_BaseModelEntity", "C_BaseFlex", "C_BaseAnimGraph", "C_BasePlayerPawn",
+        "C_CSPlayerPawnBase", "C_CSPlayerPawn", "CBasePlayerController", "CCSPlayerController", "C_EconEntity",
+        "C_BasePlayerWeapon", "C_CSWeaponBase", "C_CSWeaponBaseGun", "C_WeaponAWP", "C_C4", "C_PlantedC4",
+        "C_BaseGrenade", "C_BaseCSGrenade", "C_BaseCSGrenadeProjectile", "C_SmokeGrenadeProjectile",
+        "C_MolotovProjectile", "C_Inferno", "C_CSGameRules", "C_CSGameRulesProxy", "C_Team", "C_CSTeam",
+        "CGameSceneNode", "CSkeletonInstance", "CModelState", "CBodyComponent", "CPlayer_WeaponServices",
+        "CCSPlayer_WeaponServices", "CPlayer_ItemServices", "CCSPlayer_ItemServices", "CPlayer_MovementServices",
+        "CPlayer_MovementServices_Humanoid", "CCSPlayer_MovementServices", "CPlayer_ObserverServices",
+        "CPlayer_CameraServices", "CCSPlayerBase_CameraServices", "CCSPlayer_CameraServices",
+        "CCSPlayer_PingServices", "CCSPlayerController_InGameMoneyServices",
+        "CCSPlayerController_ActionTrackingServices", "CCSPlayerController_InventoryServices",
+        "C_EconItemView", "C_AttributeContainer", "CGlowProperty", "EntitySpottedState_t",
+        "C_PostProcessingVolume", "C_FogController", "C_EnvSky", "C_SkyCamera", "C_CSObserverPawn",
+        "C_Chicken", "C_Hostage", "C_BaseToggle", "C_BaseTrigger", "C_PointCamera", "C_EnvWind",
+    };
+    char schema_tmp[64];
+    snprintf(schema_tmp, sizeof(schema_tmp), "/tmp/schema_full.txt.tmp.%d", getpid());
+    if (FILE* schema_out = fopen(schema_tmp, "w")) {
+        size_t total = 0;
+        for (const char* cls : kSchemaClasses) {
+            for (const Field& f : DumpClass(scope, cls)) {
+                fprintf(schema_out, "%s %s %u %s\n", cls, f.name.c_str(), f.offset, f.type.empty() ? "?" : f.type.c_str());
+                total++;
+            }
+        }
+        fclose(schema_out);
+        rename(schema_tmp, "/tmp/schema_full.txt");
+        L("[inject] wrote /tmp/schema_full.txt with %zu fields\n", total);
+    }
 
     char tmp[64];
     snprintf(tmp, sizeof(tmp), "/tmp/offsets_dump.h.tmp.%d", getpid());

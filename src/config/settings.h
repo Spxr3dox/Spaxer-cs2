@@ -199,6 +199,8 @@ struct Settings {
     uint32_t bind_spread_trigger;
     int32_t  spread_coverage;
     uint32_t spread_head_only;
+    uint32_t gui_open;
+    int32_t  gui_x, gui_y, gui_w, gui_h;
 };
 
 namespace settings {

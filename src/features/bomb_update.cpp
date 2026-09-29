@@ -46,6 +46,7 @@ void UpdateBomb() {
     bool defused = g_proc.Read<bool>(bomb + off::m_bBombDefused);
     float planted_blow = off::m_flC4Blow ? g_proc.Read<float>(bomb + off::m_flC4Blow) : 0.f;
     if (defused || (!ticking && planted_blow <= 0.f)) {
+        if (g_hud.bomb_visible.load()) PushGameEvent({defused ? "bomb_defused" : "bomb_exploded", {{"site", static_cast<double>(g_hud.bomb_site.load())}}, {}});
         g_hud.bomb_visible.store(false);
         s_plant_anchor = 0.f; s_was_defusing = false;
         return;
@@ -80,6 +81,7 @@ void UpdateBomb() {
             s_was_defusing = false;
         }
         if (!g_hud.bomb_visible.load()) {
+            PushGameEvent({"bomb_planted", {{"site", static_cast<double>(site)}}, {}});
             Settings* notify_cfg = settings::Attach();
             if (notify_cfg && settings::Enabled(notify_cfg->notifications))
                 PushNotice(std::string("Bomb planted at ") + (site == 0 ? "A" : "B"), NoticeKind::Bomb);

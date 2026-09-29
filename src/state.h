@@ -60,6 +60,12 @@ struct Notice {
     std::chrono::steady_clock::time_point time;
 };
 
+struct GameEventRecord {
+    std::string name;
+    std::vector<std::pair<std::string, double>> numbers;
+    std::vector<std::pair<std::string, std::string>> strings;
+};
+
 struct HudState {
     std::atomic<bool>  bomb_visible{false};
     std::atomic<float> bomb_blow_secs{0.f};
@@ -97,9 +103,18 @@ struct HudState {
 
     std::mutex          notices_mtx;
     std::vector<Notice> notices;
+
+    std::mutex                   game_events_mtx;
+    std::vector<GameEventRecord> game_events;
 };
 
 extern HudState g_hud;
+
+inline void PushGameEvent(GameEventRecord event) {
+    std::lock_guard<std::mutex> lock(g_hud.game_events_mtx);
+    g_hud.game_events.push_back(std::move(event));
+    if (g_hud.game_events.size() > 64) g_hud.game_events.erase(g_hud.game_events.begin());
+}
 
 inline void PushNotice(std::string text, NoticeKind kind) {
     std::lock_guard<std::mutex> lock(g_hud.notices_mtx);

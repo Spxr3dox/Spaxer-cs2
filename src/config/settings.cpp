@@ -342,6 +342,33 @@ static bool CleanName(const std::string& in, std::string& out) {
     return !out.empty();
 }
 
+static bool CopyFile(const char* from, const char* to) {
+    FILE* in = fopen(from, "rb");
+    if (!in) return false;
+    char tmp[600];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", to);
+    FILE* out = fopen(tmp, "wb");
+    if (!out) {
+        fclose(in);
+        return false;
+    }
+    char buffer[8192];
+    size_t n;
+    while ((n = fread(buffer, 1, sizeof(buffer), in)) > 0) fwrite(buffer, 1, n, out);
+    fclose(in);
+    fclose(out);
+    return rename(tmp, to) == 0;
+}
+
+static void LuaValuesPaths(const std::string& config, char* live, size_t live_size, char* stored, size_t stored_size) {
+    char home[448] = {0};
+    HomeDir(home, sizeof(home));
+    char dir[512] = {0};
+    ConfigsDir(dir, sizeof(dir));
+    snprintf(live, live_size, "%s/.config/spaxer/lua_values.txt", home);
+    snprintf(stored, stored_size, "%s/%s.lua.txt", dir, config.c_str());
+}
+
 bool SaveConfig(const std::string& name) {
     std::string clean;
     if (!CleanName(name, clean)) return false;
@@ -362,6 +389,9 @@ bool SaveConfig(const std::string& name) {
     ssize_t w = write(fd, s, sizeof(Settings));
     close(fd);
     if (w != (ssize_t)sizeof(Settings)) return false;
+    char live[512], stored[600];
+    LuaValuesPaths(clean, live, sizeof(live), stored, sizeof(stored));
+    CopyFile(live, stored);
     RememberConfig(clean);
     return true;
 }
@@ -386,6 +416,9 @@ bool LoadConfig(const std::string& name) {
     Settings* s = Attach();
     if (!s) return false;
     RememberConfig(clean);
+    char live[512], stored[600];
+    LuaValuesPaths(clean, live, sizeof(live), stored, sizeof(stored));
+    CopyFile(stored, live);
     uint32_t saved_edit_mode = s->edit_mode;
     *s = tmp;
     s->edit_mode = saved_edit_mode;

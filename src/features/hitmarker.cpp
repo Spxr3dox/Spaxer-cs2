@@ -54,6 +54,9 @@ void UpdateHitmarker() {
 
         int prev = s_prev_hp[i];
         if (prev > 0 && hp < prev) {
+            PushGameEvent({"player_hurt", {{"userid", static_cast<double>(i)}, {"attacker", static_cast<double>(off::g_LocalControllerIdx)},
+                                           {"dmg_health", static_cast<double>(prev - hp)}, {"health", static_cast<double>(hp)}}, {}});
+            if (hp == 0) PushGameEvent({"player_death", {{"userid", static_cast<double>(i)}, {"attacker", static_cast<double>(off::g_LocalControllerIdx)}}, {}});
             if (hp == 0 || !settings::Enabled(cfg->hit_sound_kills_only)) hitsound::Play(sound, cfg->hit_sound_volume, hp == 0);
             if (notices) {
                 std::string name = "enemy";
