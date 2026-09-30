@@ -530,26 +530,122 @@ static void DrawSpotText(cairo_t* cr, float x, float y, const std::string& text,
     cairo_fill(cr);
 }
 
-static void DrawAimTargetMarker(cairo_t* cr, float sx, float sy, const Style& style, bool draw_line, float cx, float cy) {
+static void DrawOffscreenPointer(cairo_t* cr, float cx, float cy, float edge_r, float angle, const Style& style, const std::string& label) {
+    float px = cx + std::cos(angle) * edge_r;
+    float py = cy + std::sin(angle) * edge_r;
+    float size = 11.0f;
+    float tip_x = px + std::cos(angle) * size;
+    float tip_y = py + std::sin(angle) * size;
+    float left_x = px + std::cos(angle + 2.35f) * size;
+    float left_y = py + std::sin(angle + 2.35f) * size;
+    float right_x = px + std::cos(angle - 2.35f) * size;
+    float right_y = py + std::sin(angle - 2.35f) * size;
+
+    cairo_new_path(cr);
+    cairo_move_to(cr, tip_x, tip_y);
+    cairo_line_to(cr, left_x, left_y);
+    cairo_line_to(cr, right_x, right_y);
+    cairo_close_path(cr);
+    cairo_set_source_rgba(cr, style.r, style.g, style.b, style.a * 0.9);
+    cairo_fill_preserve(cr);
+    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.85);
+    cairo_set_line_width(cr, 2.0);
+    cairo_stroke(cr);
+
+    if (!label.empty()) {
+        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 10.0);
+        cairo_text_extents_t ext;
+        cairo_text_extents(cr, label.c_str(), &ext);
+        float lx = px - ext.width * 0.5f;
+        float ly = py + (std::sin(angle) > 0 ? 18.0f : -12.0f);
+        cairo_rectangle(cr, lx - 3.0f, ly - ext.height - 2.0f, ext.width + 6.0f, ext.height + 4.0f);
+        cairo_set_source_rgba(cr, 0.06, 0.07, 0.10, 0.85);
+        cairo_fill(cr);
+        cairo_move_to(cr, lx, ly);
+        cairo_text_path(cr, label.c_str());
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.9);
+        cairo_set_line_width(cr, 2.0);
+        cairo_stroke_preserve(cr);
+        cairo_set_source_rgba(cr, style.r, style.g, style.b, 1.0);
+        cairo_fill(cr);
+    }
+}
+
+static void DrawAimTargetMarker(cairo_t* cr, float sx, float sy, const Style& style, bool draw_line, float cx, float cy,
+                               const std::string& name, const std::string& throw_type, bool is_locked) {
     if (draw_line) {
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.5);
-        cairo_set_line_width(cr, 1.0);
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.6);
+        cairo_set_line_width(cr, 3.0);
+        cairo_move_to(cr, cx, cy);
+        cairo_line_to(cr, sx, sy);
+        cairo_stroke(cr);
+
+        cairo_set_source_rgba(cr, style.r, style.g, style.b, 0.8);
+        cairo_set_line_width(cr, 1.5);
         cairo_move_to(cr, cx, cy);
         cairo_line_to(cr, sx, sy);
         cairo_stroke(cr);
     }
-    cairo_arc(cr, sx, sy, 8.0, 0, 2 * kPi);
+
+    float r_ring = is_locked ? 12.0f : 9.0f;
+
+    cairo_arc(cr, sx, sy, r_ring, 0, 2 * kPi);
+    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.85);
+    cairo_set_line_width(cr, 4.0);
+    cairo_stroke(cr);
+
+    cairo_arc(cr, sx, sy, r_ring, 0, 2 * kPi);
+    cairo_set_source_rgba(cr, style.r, style.g, style.b, style.a);
+    cairo_set_line_width(cr, 2.0);
+    cairo_stroke_preserve(cr);
+    if (is_locked) {
+        cairo_set_source_rgba(cr, style.r, style.g, style.b, 0.35);
+        cairo_fill(cr);
+    }
+
+    cairo_arc(cr, sx, sy, 2.5, 0, 2 * kPi);
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.95);
+    cairo_fill(cr);
+
+    float tick_inner = r_ring + 2.0f;
+    float tick_outer = r_ring + 7.0f;
+
+    cairo_move_to(cr, sx - tick_outer, sy); cairo_line_to(cr, sx - tick_inner, sy);
+    cairo_move_to(cr, sx + tick_inner, sy); cairo_line_to(cr, sx + tick_outer, sy);
+    cairo_move_to(cr, sx, sy - tick_outer); cairo_line_to(cr, sx, sy - tick_inner);
+    cairo_move_to(cr, sx, sy + tick_inner); cairo_line_to(cr, sx, sy + tick_outer);
+    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.85);
+    cairo_set_line_width(cr, 3.5);
+    cairo_stroke(cr);
+
+    cairo_move_to(cr, sx - tick_outer, sy); cairo_line_to(cr, sx - tick_inner, sy);
+    cairo_move_to(cr, sx + tick_inner, sy); cairo_line_to(cr, sx + tick_outer, sy);
+    cairo_move_to(cr, sx, sy - tick_outer); cairo_line_to(cr, sx, sy - tick_inner);
+    cairo_move_to(cr, sx, sy + tick_inner); cairo_line_to(cr, sx, sy + tick_outer);
     cairo_set_source_rgba(cr, style.r, style.g, style.b, style.a);
     cairo_set_line_width(cr, 2.0);
     cairo_stroke(cr);
 
-    cairo_move_to(cr, sx - 12.0f, sy);
-    cairo_line_to(cr, sx + 12.0f, sy);
-    cairo_move_to(cr, sx, sy - 12.0f);
-    cairo_line_to(cr, sx, sy + 12.0f);
-    cairo_set_source_rgba(cr, style.r, style.g, style.b, style.a);
-    cairo_set_line_width(cr, 2.0);
-    cairo_stroke(cr);
+    std::string tag = name + " [" + throw_type + "]";
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+    cairo_set_font_size(cr, 11.0);
+    cairo_text_extents_t ext;
+    cairo_text_extents(cr, tag.c_str(), &ext);
+    float tx = sx - ext.width * 0.5f;
+    float ty = sy + r_ring + 18.0f;
+
+    cairo_rectangle(cr, tx - 4.0f, ty - ext.height - 2.0f, ext.width + 8.0f, ext.height + 5.0f);
+    cairo_set_source_rgba(cr, 0.06, 0.07, 0.10, 0.88);
+    cairo_fill(cr);
+
+    cairo_move_to(cr, tx, ty);
+    cairo_text_path(cr, tag.c_str());
+    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.9);
+    cairo_set_line_width(cr, 2.5);
+    cairo_stroke_preserve(cr);
+    cairo_set_source_rgba(cr, is_locked ? 0.35 : style.r, is_locked ? 1.0 : style.g, is_locked ? 0.45 : style.b, 1.0);
+    cairo_fill(cr);
 }
 
 static void ApplyAimAssist(const LineupSpot& lineup, uintptr_t pawn, const Settings& cfg) {
@@ -586,6 +682,7 @@ static void DrawLineups(cairo_t* cr, const render::Camera& camera, const Setting
 
     Vec3 my_pos = game::Origin(pawn);
     Vec3 eye_pos = game::EyePosition(pawn);
+    Vec3 cur_ang = off::m_angEyeAngles ? g_proc.Read<Vec3>(pawn + off::m_angEyeAngles) : camera.angles;
     float center_x = camera.width * 0.5f;
     float center_y = camera.height * 0.5f;
 
@@ -617,17 +714,52 @@ static void DrawLineups(cairo_t* cr, const render::Camera& camera, const Setting
             DrawSpotText(cr, screen_spot_x + 14.f, screen_spot_y - 14.f, label, cur_spot_style);
         }
 
+        float d_pitch = lineup.pitch - cur_ang.x;
+        float d_yaw = NormAngle(lineup.yaw - cur_ang.y);
+
         Vec3 fwd = AngleToForward(lineup.pitch, lineup.yaw);
         Vec3 target_world{eye_pos.x + fwd.x * 2000.f, eye_pos.y + fwd.y * 2000.f, eye_pos.z + fwd.z * 2000.f};
 
         float aim_sx = 0.f, aim_sy = 0.f;
-        if (camera.Project(target_world, aim_sx, aim_sy)) {
-            const Style& cur_aim_style = is_aligned ? style_active : style_aim;
-            DrawAimTargetMarker(cr, aim_sx, aim_sy, cur_aim_style, settings::Enabled(settings.grenade_helper_draw_line), center_x, center_y);
+        bool on_screen = camera.Project(target_world, aim_sx, aim_sy) &&
+                         aim_sx >= 0.f && aim_sx <= camera.width && aim_sy >= 0.f && aim_sy <= camera.height;
+
+        if (on_screen) {
+            float aim_delta = std::hypot(aim_sx - center_x, aim_sy - center_y);
+            bool is_locked = is_aligned && (aim_delta < 12.0f);
+            const Style& cur_aim_style = is_locked ? style_active : (is_aligned ? style_active : style_aim);
+
+            DrawAimTargetMarker(cr, aim_sx, aim_sy, cur_aim_style, settings::Enabled(settings.grenade_helper_draw_line),
+                               center_x, center_y, lineup.name, ThrowTypeStr(lineup.throw_type), is_locked);
+
+            if (is_locked) {
+                std::string ready_txt = "READY: " + std::string(ThrowTypeStr(lineup.throw_type));
+                cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+                cairo_set_font_size(cr, 12.0);
+                cairo_text_extents_t ext;
+                cairo_text_extents(cr, ready_txt.c_str(), &ext);
+                float rx = center_x - ext.width * 0.5f;
+                float ry = center_y + 32.0f;
+                cairo_rectangle(cr, rx - 6.0f, ry - ext.height - 3.0f, ext.width + 12.0f, ext.height + 6.0f);
+                cairo_set_source_rgba(cr, 0.05, 0.06, 0.09, 0.92);
+                cairo_fill(cr);
+                cairo_move_to(cr, rx, ry);
+                cairo_text_path(cr, ready_txt.c_str());
+                cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.9);
+                cairo_set_line_width(cr, 2.5);
+                cairo_stroke_preserve(cr);
+                cairo_set_source_rgba(cr, 0.25, 0.95, 0.45, 1.0);
+                cairo_fill(cr);
+            }
 
             if (is_aligned && settings::Enabled(settings.grenade_helper_aim) && aim_assist_key) {
                 ApplyAimAssist(lineup, pawn, settings);
             }
+        } else if (is_aligned) {
+            float angle = std::atan2(-d_pitch, d_yaw);
+            float edge_r = std::min(camera.width, camera.height) * 0.40f;
+            std::string deg_label = std::to_string(static_cast<int>(std::hypot(d_pitch, d_yaw))) + "°";
+            DrawOffscreenPointer(cr, center_x, center_y, edge_r, angle, style_active, deg_label);
         }
     }
 }
