@@ -1851,6 +1851,7 @@ static GtkWidget* BuildGui() {
         GtkWidget* page = MakePage();
         GtkWidget* helper = MakeCard("GRENADE HELPER");
         gtk_box_pack_start(GTK_BOX(helper), MakeRow("Enabled", &g_cfg->grenade_helper, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(helper), MakeRow("Built-in presets database", &g_cfg->grenade_helper_builtin, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(helper), MakeRow("Only when holding grenade", &g_cfg->grenade_helper_only_held, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(helper), MakeRow("Draw line to target", &g_cfg->grenade_helper_draw_line, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(helper), MakeRow("Aim assist", &g_cfg->grenade_helper_aim, &g_cfg->bind_grenade_helper_aim), FALSE, FALSE, 0);
@@ -1872,11 +1873,16 @@ static GtkWidget* BuildGui() {
         GtkWidget* btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         gtk_style_context_add_class(gtk_widget_get_style_context(btn_box), "row");
         GtkWidget* save_btn = gtk_button_new_with_label("Save current position");
+        GtkWidget* clear_btn = gtk_button_new_with_label("Clear all lineups");
         GtkWidget* open_file_btn = gtk_button_new_with_label("Open lineups file");
         gtk_box_pack_start(GTK_BOX(btn_box), save_btn, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(btn_box), clear_btn, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(btn_box), open_file_btn, TRUE, TRUE, 0);
         g_signal_connect(save_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
             if (g_cfg) __atomic_fetch_add(&g_cfg->grenade_helper_save_token, 1, __ATOMIC_RELAXED);
+        }), nullptr);
+        g_signal_connect(clear_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
+            if (g_cfg) __atomic_fetch_add(&g_cfg->grenade_helper_clear_token, 1, __ATOMIC_RELAXED);
         }), nullptr);
         g_signal_connect(open_file_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
             const char* home = getenv("HOME");

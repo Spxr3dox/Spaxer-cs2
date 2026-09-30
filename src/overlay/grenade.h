@@ -46,9 +46,11 @@ bool AddCurrentSpot(const std::string& custom_name = "", ThrowType throw_type = 
 
 bool RemoveNearestSpot();
 
+bool ClearAllCustomSpots();
+
 const std::vector<LineupSpot>& GetAllLineups();
 
-std::vector<LineupSpot> GetLineupsForMap(const std::string& map);
+std::vector<LineupSpot> GetLineupsForMap(const std::string& map, bool include_builtin = true);
 
 void Draw(cairo_t* cr, const render::Camera& camera, const Settings& settings);
 

@@ -213,16 +213,26 @@ void SaveCustomLineups() {
     }
 }
 
-std::vector<LineupSpot> GetLineupsForMap(const std::string& map) {
+std::vector<LineupSpot> GetLineupsForMap(const std::string& map, bool include_builtin) {
     if (!s_custom_loaded) LoadCustomLineups();
     std::vector<LineupSpot> result;
-    for (const LineupSpot& spot : kBuiltinLineups) {
-        if (map.empty() || spot.map == map || spot.map == "general") result.push_back(spot);
+    if (include_builtin) {
+        for (const LineupSpot& spot : kBuiltinLineups) {
+            if (map.empty() || spot.map == map || spot.map == "general") result.push_back(spot);
+        }
     }
     for (const LineupSpot& spot : s_custom_lineups) {
         if (map.empty() || spot.map == map || spot.map == "general") result.push_back(spot);
     }
     return result;
+}
+
+bool ClearAllCustomSpots() {
+    if (!s_custom_loaded) LoadCustomLineups();
+    s_custom_lineups.clear();
+    SaveCustomLineups();
+    PushNotice("Cleared all custom lineups", NoticeKind::Info);
+    return true;
 }
 
 const std::vector<LineupSpot>& GetAllLineups() {
@@ -791,7 +801,7 @@ static void DrawLineups(cairo_t* cr, const render::Camera& camera, const Setting
     bool has_grenade = KindForWeapon(game::ActiveWeaponDefinitionIndex(pawn), held_kind);
     if (settings::Enabled(settings.grenade_helper_only_held) && !has_grenade) return;
 
-    std::vector<LineupSpot> lineups = GetLineupsForMap(map);
+    std::vector<LineupSpot> lineups = GetLineupsForMap(map, settings::Enabled(settings.grenade_helper_builtin));
     if (lineups.empty()) return;
 
     Vec3 my_pos = game::Origin(pawn);
@@ -925,6 +935,11 @@ static void HandleTokenAndHotkeys(const Settings& settings) {
     if (settings.grenade_helper_save_token != last_token) {
         last_token = settings.grenade_helper_save_token;
         AddCurrentSpot();
+    }
+    static int32_t last_clear_token = 0;
+    if (settings.grenade_helper_clear_token != last_clear_token) {
+        last_clear_token = settings.grenade_helper_clear_token;
+        ClearAllCustomSpots();
     }
     static bool prev_save = false;
     bool now_save = IsBindActive(settings.bind_grenade_helper_save);
