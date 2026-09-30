@@ -196,4 +196,15 @@
     X(thirdperson_internal, Toggle) \
     X(bind_anti_aim, Bind) \
     X(bind_night_mode_internal, Bind) \
-    X(bind_thirdperson_internal, Bind)
+    X(bind_thirdperson_internal, Bind) \
+    X(grenade_helper, Toggle) \
+    X(grenade_helper_only_held, Toggle) \
+    X(grenade_helper_draw_line, Toggle) \
+    X(grenade_helper_aim, Toggle) \
+    X(bind_grenade_helper_aim, Bind) \
+    X(bind_grenade_helper_save, Bind) \
+    X(bind_grenade_helper_remove, Bind) \
+    X(grenade_helper_spot_color_rgba, Color) \
+    X(grenade_helper_active_color_rgba, Color) \
+    X(grenade_helper_aim_color_rgba, Color) \
+    X(grenade_helper_save_token, Number)

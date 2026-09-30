@@ -26,7 +26,7 @@ const char* Path() {
     return s_path;
 }
 
-static constexpr uint32_t kMigrationLevel = 21;
+static constexpr uint32_t kMigrationLevel = 22;
 
 static void DefaultEspExtras(Settings& s) {
     s.sound_esp_rgba = 0x00CCFFC0;
@@ -76,6 +76,22 @@ static void Migrate(Settings& s) {
         s.bind_silent_aim = 0;
         s.bind_auto_scope = 0;
         s.bind_long_jump = 0;
+    }
+    if (s.migration_level < 22) {
+        s.grenade_helper = 1;
+        s.grenade_helper_only_held = 1;
+        s.grenade_helper_draw_line = 1;
+        s.grenade_helper_aim = 1;
+        s.bind_grenade_helper_aim = 0;
+        s.bind_grenade_helper_save = 0;
+        s.bind_grenade_helper_remove = 0;
+        s.grenade_helper_spot_color_rgba = 0x4C8DFFC8;
+        s.grenade_helper_active_color_rgba = 0x32DC64FF;
+        s.grenade_helper_aim_color_rgba = 0xFFB400DC;
+        s.grenade_helper_save_token = 0;
+        SetBindMode(s, &s.bind_grenade_helper_aim, BindMode::Hold);
+        SetBindMode(s, &s.bind_grenade_helper_save, BindMode::Toggle);
+        SetBindMode(s, &s.bind_grenade_helper_remove, BindMode::Toggle);
     }
     if (s.migration_level < 21) {
         s.anti_aim = 0;
@@ -306,6 +322,20 @@ void Defaults(Settings& s) {
     s.rage_auto_fire = 0;
     s.bind_rage_auto_fire = 0;
     SetBindMode(s, &s.bind_rage_auto_fire, BindMode::Hold);
+    s.grenade_helper = 1;
+    s.grenade_helper_only_held = 1;
+    s.grenade_helper_draw_line = 1;
+    s.grenade_helper_aim = 1;
+    s.bind_grenade_helper_aim = 0;
+    s.bind_grenade_helper_save = 0;
+    s.bind_grenade_helper_remove = 0;
+    s.grenade_helper_spot_color_rgba = 0x4C8DFFC8;
+    s.grenade_helper_active_color_rgba = 0x32DC64FF;
+    s.grenade_helper_aim_color_rgba = 0xFFB400DC;
+    s.grenade_helper_save_token = 0;
+    SetBindMode(s, &s.bind_grenade_helper_aim, BindMode::Hold);
+    SetBindMode(s, &s.bind_grenade_helper_save, BindMode::Toggle);
+    SetBindMode(s, &s.bind_grenade_helper_remove, BindMode::Toggle);
     s.migration_level = kMigrationLevel;
 }
 

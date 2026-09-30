@@ -967,6 +967,7 @@ static const char* kGlyphEsp = "<circle cx=\"12\" cy=\"7\" r=\"4\"/><path d=\"M4
 static const char* kGlyphHud = "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\"/><line x1=\"9\" y1=\"21\" x2=\"9\" y2=\"9\"/>";
 static const char* kGlyphWorld = "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"2\" y1=\"12\" x2=\"22\" y2=\"12\"/><path d=\"M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\"/>";
 static const char* kGlyphMisc = "<line x1=\"4\" y1=\"21\" x2=\"4\" y2=\"14\"/><line x1=\"4\" y1=\"10\" x2=\"4\" y2=\"3\"/><line x1=\"12\" y1=\"21\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"3\"/><line x1=\"20\" y1=\"21\" x2=\"20\" y2=\"16\"/><line x1=\"20\" y1=\"12\" x2=\"20\" y2=\"3\"/><line x1=\"1\" y1=\"14\" x2=\"7\" y2=\"14\"/><line x1=\"9\" y1=\"8\" x2=\"15\" y2=\"8\"/><line x1=\"17\" y1=\"16\" x2=\"23\" y2=\"16\"/>";
+static const char* kGlyphGrenades = "<path d=\"M12 2v3m-3-3h6\"/><rect x=\"8\" y=\"5\" width=\"8\" height=\"3\" rx=\"1\"/><path d=\"M12 8c-3.5 0-6 2.5-6 6a6 6 0 0 0 12 0c0-3.5-2.5-6-6-6z\"/><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"20\"/><line x1=\"6\" y1=\"14\" x2=\"18\" y2=\"14\"/>";
 static const char* kGlyphScripts = "<polyline points=\"16 18 22 12 16 6\"/><polyline points=\"8 6 2 12 8 18\"/><line x1=\"14\" y1=\"4\" x2=\"10\" y2=\"20\"/>";
 static const char* kGlyphFile = "<path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"/><polyline points=\"14 2 14 8 20 8\"/><line x1=\"8\" y1=\"13\" x2=\"16\" y2=\"13\"/><line x1=\"8\" y1=\"17\" x2=\"13\" y2=\"17\"/>";
 
@@ -976,6 +977,7 @@ static const std::string s_svg_movement = LineIconSvg(kGlyphMovement);
 static const std::string s_svg_esp = LineIconSvg(kGlyphEsp);
 static const std::string s_svg_hud = LineIconSvg(kGlyphHud);
 static const std::string s_svg_world = LineIconSvg(kGlyphWorld);
+static const std::string s_svg_grenades = LineIconSvg(kGlyphGrenades);
 static const std::string s_svg_misc = LineIconSvg(kGlyphMisc);
 static const std::string s_svg_scripts = LineIconSvg(kGlyphScripts);
 static const std::string s_svg_lua_file = LineIconSvg(kGlyphFile);
@@ -1845,10 +1847,50 @@ static GtkWidget* BuildGui() {
 
         gtk_stack_add_named(GTK_STACK(g_stack), page, "render-world");
     }
+    {
+        GtkWidget* page = MakePage();
+        GtkWidget* helper = MakeCard("GRENADE HELPER");
+        gtk_box_pack_start(GTK_BOX(helper), MakeRow("Enabled", &g_cfg->grenade_helper, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(helper), MakeRow("Only when holding grenade", &g_cfg->grenade_helper_only_held, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(helper), MakeRow("Draw line to target", &g_cfg->grenade_helper_draw_line, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(helper), MakeRow("Aim assist", &g_cfg->grenade_helper_aim, &g_cfg->bind_grenade_helper_aim), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(helper), MakeRow("Quick save spot (bind)", nullptr, &g_cfg->bind_grenade_helper_save), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(helper), MakeRow("Quick remove nearest (bind)", nullptr, &g_cfg->bind_grenade_helper_remove), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(helper), MakeColorRow("Spot color", &g_cfg->grenade_helper_spot_color_rgba), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(helper), MakeColorRow("Active (aligned) color", &g_cfg->grenade_helper_active_color_rgba), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(helper), MakeColorRow("Aim marker color", &g_cfg->grenade_helper_aim_color_rgba), FALSE, FALSE, 0);
+        Place(page, helper, false);
+
+        GtkWidget* pred = MakeCard("PREDICTION & TRAJECTORY");
+        gtk_box_pack_start(GTK_BOX(pred), MakeRow("My grenade trajectory", &g_cfg->grenade_trajectory, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(pred), MakeRow("Thrown grenades (world)", &g_cfg->grenade_world, nullptr), FALSE, FALSE, 0);
+        Place(page, pred, true);
+
+        GtkWidget* creator = MakeCard("LINEUP MANAGER");
+        GtkWidget* btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_style_context_add_class(gtk_widget_get_style_context(btn_box), "row");
+        GtkWidget* save_btn = gtk_button_new_with_label("Save current position");
+        GtkWidget* open_file_btn = gtk_button_new_with_label("Open lineups file");
+        gtk_box_pack_start(GTK_BOX(btn_box), save_btn, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(btn_box), open_file_btn, TRUE, TRUE, 0);
+        g_signal_connect(save_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
+            if (g_cfg) __atomic_fetch_add(&g_cfg->grenade_helper_save_token, 1, __ATOMIC_RELAXED);
+        }), nullptr);
+        g_signal_connect(open_file_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
+            const char* home = getenv("HOME");
+            std::string path = std::string(home ? home : "/tmp") + "/.config/spaxer/lineups.txt";
+            OpenPath(path);
+        }), nullptr);
+        gtk_box_pack_start(GTK_BOX(creator), btn_box, FALSE, FALSE, 0);
+        Place(page, creator, true);
+
+        gtk_stack_add_named(GTK_STACK(g_stack), page, "grenades");
+    }
     AddSidebarHeader(sidebar, "VISUALS");
     AddSidebarItemSvg(sidebar, s_svg_esp.c_str(), "render-esp", "ESP");
     AddSidebarItemSvg(sidebar, s_svg_hud.c_str(), "render-hud", "HUD");
     AddSidebarItemSvg(sidebar, s_svg_world.c_str(), "render-world", "World");
+    AddSidebarItemSvg(sidebar, s_svg_grenades.c_str(), "grenades", "Grenades");
     {
         GtkWidget* page = MakePage();
         Place(page, MakeLoaderCard(), false);

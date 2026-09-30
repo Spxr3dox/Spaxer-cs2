@@ -732,6 +732,7 @@ static std::vector<KeybindEntry> KeybindEntries() {
         {"Edge bug", &g_cfg->bind_edge_bug, &g_cfg->edge_bug},
         {"Edge jump", &g_cfg->bind_edge_jump, &g_cfg->edge_jump},
         {"Silent aim", &g_cfg->bind_silent_aim, &g_cfg->silent_aim},
+        {"Grenade aim", &g_cfg->bind_grenade_helper_aim, &g_cfg->grenade_helper_aim},
         {"Edit HUD", &g_cfg->bind_edit_hud, &g_cfg->edit_mode},
     };
 }
@@ -2509,6 +2510,16 @@ static void BridgeThread() {
     }
 }
 
+static gboolean OnGrenadeSave(gpointer) {
+    grenade::AddCurrentSpot();
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean OnGrenadeRemove(gpointer) {
+    grenade::RemoveNearestSpot();
+    return G_SOURCE_REMOVE;
+}
+
 static void HotkeyThread() {
     struct HotkeyBinding { uint32_t* bind; uint32_t* feature; GSourceFunc action; };
     const HotkeyBinding bindings[] = {
@@ -2537,6 +2548,9 @@ static void HotkeyThread() {
         {&g_cfg->bind_edge_bug, &g_cfg->edge_bug, nullptr},
         {&g_cfg->bind_edge_jump, &g_cfg->edge_jump, nullptr},
         {&g_cfg->bind_silent_aim, &g_cfg->silent_aim, nullptr},
+        {&g_cfg->bind_grenade_helper_aim, &g_cfg->grenade_helper_aim, nullptr},
+        {&g_cfg->bind_grenade_helper_save, nullptr, OnGrenadeSave},
+        {&g_cfg->bind_grenade_helper_remove, nullptr, OnGrenadeRemove},
     };
     constexpr size_t kCount = sizeof(bindings) / sizeof(bindings[0]);
     Display* d = XOpenDisplay(nullptr);

@@ -225,6 +225,17 @@ struct Settings {
     int32_t  gui_x, gui_y, gui_w, gui_h;
     uint32_t rage_auto_fire;
     uint32_t bind_rage_auto_fire;
+    uint32_t grenade_helper;
+    uint32_t grenade_helper_only_held;
+    uint32_t grenade_helper_draw_line;
+    uint32_t grenade_helper_aim;
+    uint32_t bind_grenade_helper_aim;
+    uint32_t bind_grenade_helper_save;
+    uint32_t bind_grenade_helper_remove;
+    uint32_t grenade_helper_spot_color_rgba;
+    uint32_t grenade_helper_active_color_rgba;
+    uint32_t grenade_helper_aim_color_rgba;
+    int32_t  grenade_helper_save_token;
 };
 
 namespace settings {
