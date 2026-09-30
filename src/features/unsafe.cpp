@@ -1,8 +1,10 @@
 #include "features.h"
 #include "config/settings.h"
+#include "input/input.h"
 #include "sdk/game.h"
 #include "sdk/visibility.h"
 #include "state.h"
+#include <linux/input.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -190,6 +192,28 @@ static void EffectsLoop() {
         if (pawn && settings::Enabled(cfg->no_flash)) ApplyAntiFlash(pawn);
         ApplySmokes(world.smokes, *cfg);
         night.Apply(world, *cfg);
+
+        if (settings::Enabled(cfg->auto_pickup) && pawn && g_hud.cs2_focused.load()) {
+            std::vector<DroppedItemEntry> items;
+            {
+                std::lock_guard<std::mutex> lk(g_hud.items_mtx);
+                items = g_hud.dropped_items;
+            }
+            Vec3 pos = game::Origin(pawn);
+            for (const auto& item : items) {
+                float dx = item.world_x - pos.x, dy = item.world_y - pos.y, dz = item.world_z - pos.z;
+                if (dx * dx + dy * dy + dz * dz < 70.f * 70.f) {
+                    static auto last_pickup = Clock::now();
+                    if (now - last_pickup > std::chrono::milliseconds(500)) {
+                        last_pickup = now;
+                        g_input.SetVirtualKey(KEY_E, true);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                        g_input.SetVirtualKey(KEY_E, false);
+                    }
+                    break;
+                }
+            }
+        }
     }
     night.Restore();
 }

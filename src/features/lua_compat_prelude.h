@@ -393,6 +393,34 @@ function entity_methods:get_abs_rotation()
     local node = self.m_pGameSceneNode
     return node and node.m_angAbsRotation or angle_t(0, 0, 0)
 end
+function entity_methods:get_eye_position()
+    local origin = self:get_abs_origin()
+    local flags = self.m_fFlags or 0
+    local crouched = (math.floor(flags) % 4 >= 2)
+    return vec3_t(origin.x, origin.y, origin.z + (crouched and 46 or 64))
+end
+function entity_methods:get_eye_angles()
+    local ang = self.m_angEyeAngles
+    return ang and angle_t(ang.pitch, ang.yaw, ang.roll) or angle_t(0, 0, 0)
+end
+function entity_methods:get_velocity()
+    local v = self.m_vecVelocity
+    return v and vec3_t(v.x, v.y, v.z) or vec3_t(0, 0, 0)
+end
+function entity_methods:is_alive()
+    local hp = self.m_iHealth or 0
+    return hp > 0
+end
+function entity_methods:get_active_weapon()
+    local services = self.m_pWeaponServices
+    if not services then return nil end
+    local handle = services.m_hActiveWeapon
+    return entitylist.get_entity_from_handle(handle)
+end
+function entity_methods:is_grenade()
+    local name = self:get_designer_name()
+    return name:find("grenade") ~= nil or name:find("flashbang") ~= nil or name:find("molotov") ~= nil or name:find("decoy") ~= nil
+end
 
 entitylist = {}
 function entitylist.get_local_player_controller()
@@ -434,6 +462,29 @@ local hitbox_names = { [0] = "head_0", "neck_0", "pelvis", "spine_0", "spine_1",
 local hitbox_radius = { [0] = 4.2, 3.6, 6.5, 6.5, 6.8, 6.8, 6.2, 5.0, 5.0, 4.0, 4.0, 3.0, 3.0, 2.6, 2.6, 3.0, 2.6, 3.0, 2.6 }
 
 engine = engine or {}
+function engine.is_in_game()
+    local pawn = entitylist.get_local_player_pawn()
+    return pawn ~= nil and pawn:is_alive()
+end
+function engine.get_view_angles()
+    local pawn = entitylist.get_local_player_pawn()
+    if not pawn then return angle_t(0, 0, 0) end
+    return pawn:get_eye_angles()
+end
+function engine.set_view_angles(ang)
+    if not ang then return end
+    local pawn = entitylist.get_local_player_pawn()
+    if not pawn then return end
+    local cur = pawn:get_eye_angles()
+    local d_pitch = math.normalize_angle((ang.pitch or ang[1] or 0) - cur.pitch)
+    local d_yaw = math.normalize_angle((ang.yaw or ang[2] or 0) - cur.yaw)
+    local sens = config.get("aimbot_sens_x1000")
+    sens = (type(sens) == "number" and sens > 0) and (sens / 1000.0) or 2.5
+    local deg_per_px = sens * 0.022
+    local dx = math.floor(-d_yaw / deg_per_px + (d_yaw < 0 and -0.5 or 0.5))
+    local dy = math.floor(d_pitch / deg_per_px + (d_pitch < 0 and -0.5 or 0.5))
+    if dx ~= 0 or dy ~= 0 then input.mouse_move(dx, dy) end
+end
 function engine.get_level_name() return spx.level_name() end
 function engine.camera_in_thirdperson() return spx.thirdperson() end
 function engine.get_product_version_string() return spx.version() end

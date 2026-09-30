@@ -280,10 +280,18 @@ static AimResult ComputeAim(Settings* cfg, AimState& state, Humanizer& humanizer
             }
         }
 
+        int def_idx = game::ActiveWeaponDefinitionIndex(pawn);
+        bool is_sniper = (def_idx == 9 || def_idx == 11 || def_idx == 38 || def_idx == 40);
+        bool is_scoped = off::m_bIsScoped && g_proc.Read<bool>(pawn + off::m_bIsScoped);
+        if (settings::Enabled(cfg->auto_scope) && is_sniper && !is_scoped && target && g_input.IsMouseDown(1)) {
+            g_input.ClickRight();
+        }
+
         Vec3 desired;
         if (AngleDelta(eye, va, aim_point, desired) < 0.05f) { move_x = move_y = 0.f; return AimResult::Aim; }
         float d_yaw = NormAngle(desired.y - va.y);
         float d_pitch = NormAngle(desired.x - va.x);
+
         float base_smooth = (weapon ? weapon->aimbot_smooth_x100 : cfg->aimbot_smooth_x100) / 100.f;
         float smooth = std::clamp(humanizer.Speed(*cfg, base_smooth, now), 0.02f, 1.f);
         move_x = -d_yaw / deg_per_pixel * smooth;
@@ -301,6 +309,23 @@ static void Loop() {
 
     while (s_running.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        if (settings::Enabled(cfg->auto_pistol) && g_hud.cs2_focused.load()) {
+            uintptr_t p = game::LocalPawn();
+            if (p) {
+                int def = game::ActiveWeaponDefinitionIndex(p);
+                bool is_pistol = (def == 1 || def == 2 || def == 3 || def == 4 ||
+                                  def == 30 || def == 32 || def == 36 || def == 61 ||
+                                  def == 63 || def == 64);
+                if (is_pistol && g_input.IsMouseDown(1)) {
+                    static auto last_pistol = std::chrono::steady_clock::now();
+                    auto now_p = std::chrono::steady_clock::now();
+                    if (now_p - last_pistol > std::chrono::milliseconds(70)) {
+                        last_pistol = now_p;
+                        g_input.ClickLeft();
+                    }
+                }
+            }
+        }
         float move_x = 0.f, move_y = 0.f;
         AimResult result = ComputeAim(cfg, state, humanizer, move_x, move_y);
         if (result == AimResult::Aim) {
@@ -317,8 +342,10 @@ static void Loop() {
         int dy = static_cast<int>(move_y);
         rest_x = move_x - dx;
         rest_y = move_y - dy;
-        dx = std::clamp(dx, -200, 200);
-        dy = std::clamp(dy, -150, 150);
+        int max_dx = 200;
+        int max_dy = 150;
+        dx = std::clamp(dx, -max_dx, max_dx);
+        dy = std::clamp(dy, -max_dy, max_dy);
         if (dx || dy) g_input.MouseMove(dx, dy);
     }
 }

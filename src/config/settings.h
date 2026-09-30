@@ -128,6 +128,26 @@ struct Settings {
     uint32_t chams_hide_model;
     int32_t  render_lead_ms;
     uint32_t migration_level;
+    uint32_t hud_theme;
+    uint32_t hud_accent_rgba;
+    uint32_t silent_aim;
+    uint32_t auto_scope;
+    uint32_t long_jump;
+    uint32_t slide_hop;
+    uint32_t auto_pistol;
+    uint32_t clan_tag_spin;
+    uint32_t auto_accept;
+    uint32_t damage_log;
+    uint32_t auto_pickup;
+    uint32_t bind_silent_aim;
+    uint32_t bind_auto_scope;
+    uint32_t bind_long_jump;
+    uint32_t anti_aim;
+    uint32_t night_mode_internal;
+    uint32_t bind_anti_aim;
+    uint32_t bind_night_mode_internal;
+    uint32_t bind_thirdperson_internal;
+    uint32_t thirdperson_internal;
     uint32_t bind_sound_esp;
     uint32_t sound_esp_rgba;
     uint32_t bind_weapon_esp;
@@ -191,6 +211,8 @@ struct Settings {
     uint32_t ladder_jump;
     uint32_t keystrokes;
     uint32_t notifications;
+    uint32_t bind_keystrokes;
+    uint32_t bind_notifications;
     int32_t  hud_keys_x;
     int32_t  hud_keys_y;
     int32_t  hud_notif_x;
@@ -201,6 +223,8 @@ struct Settings {
     uint32_t spread_head_only;
     uint32_t gui_open;
     int32_t  gui_x, gui_y, gui_w, gui_h;
+    uint32_t rage_auto_fire;
+    uint32_t bind_rage_auto_fire;
 };
 
 namespace settings {

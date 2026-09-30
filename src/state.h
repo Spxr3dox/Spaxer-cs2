@@ -52,7 +52,7 @@ struct DroppedItemEntry {
     char name[32];
 };
 
-enum class NoticeKind : int { Info, Hit, Kill, On, Off, Bomb };
+enum class NoticeKind : int { Info, Hit, Kill, On, Off, Bomb, Miss };
 
 struct Notice {
     std::string text;

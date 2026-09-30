@@ -373,6 +373,84 @@ private:
     Clock::time_point m_crouch_time{};
 };
 
+class LongJump {
+public:
+    void Update(bool enabled, bool grounded, uintptr_t pawn, Clock::time_point now) {
+        if (!enabled || !pawn || !off::m_vecVelocity) {
+            if (m_crouched) { g_input.HoldCrouch(false); m_crouched = false; }
+            m_was_grounded = grounded;
+            return;
+        }
+        Vec3 vel = g_proc.Read<Vec3>(pawn + off::m_vecVelocity);
+        if (m_was_grounded && !grounded && vel.z > 50.f) {
+            m_jumping = true;
+            m_takeoff_time = now;
+            m_crouched = true;
+            g_input.HoldCrouch(true);
+        }
+        if (m_jumping && !grounded) {
+            if (m_crouched && now - m_takeoff_time > std::chrono::milliseconds(70)) {
+                g_input.HoldCrouch(false);
+                m_crouched = false;
+            } else if (!m_crouched && vel.z < -180.f && vis::Ready()) {
+                Vec3 origin = game::Origin(pawn);
+                Vec3 hit;
+                if (vis::Raycast({origin.x, origin.y, origin.z + 4.f}, {origin.x, origin.y, origin.z - 45.f}, hit, nullptr, vis::Blocks::Grenades)) {
+                    m_crouched = true;
+                    g_input.HoldCrouch(true);
+                }
+            }
+        }
+        if (grounded) {
+            m_jumping = false;
+            if (m_crouched) {
+                g_input.HoldCrouch(false);
+                m_crouched = false;
+            }
+        }
+        m_was_grounded = grounded;
+    }
+
+private:
+    bool m_was_grounded = true;
+    bool m_jumping = false;
+    bool m_crouched = false;
+    Clock::time_point m_takeoff_time{};
+};
+
+class SlideHop {
+public:
+    void Update(bool enabled, bool grounded, uintptr_t pawn, Clock::time_point now) {
+        if (!enabled || !pawn || !off::m_vecVelocity) {
+            if (m_sliding) { g_input.HoldCrouch(false); m_sliding = false; }
+            return;
+        }
+        Vec3 vel = g_proc.Read<Vec3>(pawn + off::m_vecVelocity);
+        float horiz_speed = std::hypot(vel.x, vel.y);
+        if (!grounded && vel.z < -60.f && horiz_speed > 120.f && vis::Ready()) {
+            Vec3 origin = game::Origin(pawn);
+            Vec3 hit;
+            if (vis::Raycast({origin.x, origin.y, origin.z + 4.f}, {origin.x, origin.y, origin.z - 60.f}, hit, nullptr, vis::Blocks::Grenades)) {
+                if (!m_sliding) {
+                    m_sliding = true;
+                    m_slide_start = now;
+                    g_input.HoldCrouch(true);
+                }
+            }
+        }
+        if (grounded && m_sliding) {
+            if (now - m_slide_start > std::chrono::milliseconds(180) || horiz_speed < 80.f) {
+                g_input.HoldCrouch(false);
+                m_sliding = false;
+            }
+        }
+    }
+
+private:
+    bool m_sliding = false;
+    Clock::time_point m_slide_start{};
+};
+
 static void Loop() {
     Settings* cfg = settings::Attach();
     if (!cfg) return;
@@ -382,6 +460,8 @@ static void Loop() {
     LadderAssist ladder;
     EdgeJump edge_jump;
     EdgeBug edge_bug;
+    LongJump long_jump;
+    SlideHop slide_hop;
     while (s_running.load()) {
         int mouse_dx = g_input.TakeMouseDX();
         uintptr_t pawn = game::LocalPawn();
@@ -409,8 +489,10 @@ static void Loop() {
 
         edge_jump.Update(active && settings::Enabled(cfg->edge_jump), grounded, pawn, now);
         edge_bug.Update(active && settings::Enabled(cfg->edge_bug), grounded, pawn, now);
+        long_jump.Update(active && settings::Enabled(cfg->long_jump), grounded, pawn, now);
+        slide_hop.Update(active && settings::Enabled(cfg->slide_hop), grounded, pawn, now);
 
-        bool fast_loop = space_held || (settings::Enabled(cfg->edge_bug) && !grounded);
+        bool fast_loop = space_held || (settings::Enabled(cfg->edge_bug) && !grounded) || (settings::Enabled(cfg->long_jump) && !grounded);
         std::this_thread::sleep_for(std::chrono::milliseconds(fast_loop ? 1 : 5));
     }
     strafer.Stop();

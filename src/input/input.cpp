@@ -384,23 +384,22 @@ void Input::MouseMove(int dx, int dy) {
         Display* d = static_cast<Display*>(m_display);
         XTestFakeRelativeMotionEvent(d, dx, dy, 0);
         XFlush(d);
-        return;
     }
     EnsureMouse();
-    if (s_mouse_fd < 0) return;
-    input_event ex{}; ex.type = EV_REL; ex.code = REL_X; ex.value = dx;
-    input_event ey{}; ey.type = EV_REL; ey.code = REL_Y; ey.value = dy;
-    input_event syn{}; syn.type = EV_SYN; syn.code = SYN_REPORT;
-    if (dx) write(s_mouse_fd, &ex, sizeof(ex));
-    if (dy) write(s_mouse_fd, &ey, sizeof(ey));
-    write(s_mouse_fd, &syn, sizeof(syn));
+    if (s_mouse_fd >= 0) {
+        input_event ex{}; ex.type = EV_REL; ex.code = REL_X; ex.value = dx;
+        input_event ey{}; ey.type = EV_REL; ey.code = REL_Y; ey.value = dy;
+        input_event syn{}; syn.type = EV_SYN; syn.code = SYN_REPORT;
+        if (dx) write(s_mouse_fd, &ex, sizeof(ex));
+        if (dy) write(s_mouse_fd, &ey, sizeof(ey));
+        write(s_mouse_fd, &syn, sizeof(syn));
+    }
 }
 
 void Input::HoldShift(bool down) {
     EnsureKbd();
     if (s_kbd_fd >= 0) {
         EmitKey(KEY_LEFTSHIFT, down ? 1 : 0);
-        return;
     }
     if (m_display) {
         Display* d = static_cast<Display*>(m_display);
@@ -415,16 +414,40 @@ void Input::ClickLeft() {
         Display* d = static_cast<Display*>(m_display);
         XTestFakeButtonEvent(d, 1, True, 0);
         XFlush(d);
-        usleep(8000);
-        XTestFakeButtonEvent(d, 1, False, CurrentTime);
-        XFlush(d);
-        return;
     }
     EnsureMouse();
     if (s_mouse_fd >= 0) {
         EmitBtn(BTN_LEFT, 1);
-        usleep(8000);
+    }
+    usleep(8000);
+    if (m_display) {
+        Display* d = static_cast<Display*>(m_display);
+        XTestFakeButtonEvent(d, 1, False, CurrentTime);
+        XFlush(d);
+    }
+    if (s_mouse_fd >= 0) {
         EmitBtn(BTN_LEFT, 0);
+    }
+}
+
+void Input::ClickRight() {
+    if (m_display) {
+        Display* d = static_cast<Display*>(m_display);
+        XTestFakeButtonEvent(d, 3, True, 0);
+        XFlush(d);
+    }
+    EnsureMouse();
+    if (s_mouse_fd >= 0) {
+        EmitBtn(BTN_RIGHT, 1);
+    }
+    usleep(8000);
+    if (m_display) {
+        Display* d = static_cast<Display*>(m_display);
+        XTestFakeButtonEvent(d, 3, False, CurrentTime);
+        XFlush(d);
+    }
+    if (s_mouse_fd >= 0) {
+        EmitBtn(BTN_RIGHT, 0);
     }
 }
 

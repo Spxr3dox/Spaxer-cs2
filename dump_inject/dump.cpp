@@ -213,7 +213,7 @@ static bool DoDump() {
         {"CBasePlayerController", {"m_bIsLocalPlayerController", "m_iszPlayerName"}},
         {"C_BaseEntity", {"m_iHealth", "m_iTeamNum", "m_fFlags", "m_pGameSceneNode", "m_lifeState", "m_vecVelocity", "m_hOwnerEntity", "m_fEffects"}},
         {"C_BasePlayerPawn", {"m_pWeaponServices", "m_pCameraServices", "m_pObserverServices", "m_bIsThirdPersonView"}},
-        {"CPlayer_ObserverServices", {"m_hObserverTarget", "m_iObserverMode"}},
+        {"CPlayer_ObserverServices", {"m_hObserverTarget", "m_iObserverMode", "m_bForcedObserverMode"}},
         {"C_PlantedC4", {"m_bBombTicking", "m_bBombDefused", "m_bBeingDefused", "m_nBombSite", "m_flTimerLength", "m_flDefuseLength", "m_flC4Blow", "m_flDefuseCountDown"}},
         {"C_CSPlayerPawn", {"m_iIDEntIndex", "m_bIsScoped", "m_iShotsFired", "m_angEyeAngles", "m_flFlashMaxAlpha", "m_flFlashDuration", "m_aimPunchAngle", "m_aimPunchCache"}},
         {"C_CSPlayerPawnBase", {"m_iIDEntIndex", "m_pWeaponServices", "m_angEyeAngles", "m_bIsScoped", "m_flFlashMaxAlpha", "m_flFlashDuration"}},

@@ -165,7 +165,26 @@ static void RoundedRect(cairo_t* cr, double x, double y, double w, double h, dou
     cairo_close_path(cr);
 }
 
-constexpr double kAccentR = 0.30, kAccentG = 0.55, kAccentB = 1.0;
+double kAccentR = 0.30, kAccentG = 0.55, kAccentB = 1.0;
+
+static void UpdateAccentFromTheme() {
+    if (!g_cfg) return;
+    uint32_t rgba = g_cfg->hud_accent_rgba;
+    if (rgba == 0) {
+        switch (g_cfg->hud_theme) {
+            case 1: rgba = 0xB47CFFFF; break;
+            case 2: rgba = 0x60D68CFF; break;
+            case 3: rgba = 0xFF6B6BFF; break;
+            case 4: rgba = 0xFFA24DFF; break;
+            case 5: rgba = 0xFF7BC8FF; break;
+            case 6: rgba = 0x50E3F2FF; break;
+            default: rgba = 0x4C8DFFFF; break;
+        }
+    }
+    kAccentR = ((rgba >> 24) & 0xFF) / 255.0;
+    kAccentG = ((rgba >> 16) & 0xFF) / 255.0;
+    kAccentB = ((rgba >>  8) & 0xFF) / 255.0;
+}
 
 static double s_hud_scale = 1.0;
 static double s_hud_dt = 0.0;
@@ -712,6 +731,7 @@ static std::vector<KeybindEntry> KeybindEntries() {
         {"Weapon ESP", &g_cfg->bind_weapon_esp, &g_cfg->esp_dropped_weapons},
         {"Edge bug", &g_cfg->bind_edge_bug, &g_cfg->edge_bug},
         {"Edge jump", &g_cfg->bind_edge_jump, &g_cfg->edge_jump},
+        {"Silent aim", &g_cfg->bind_silent_aim, &g_cfg->silent_aim},
         {"Edit HUD", &g_cfg->bind_edit_hud, &g_cfg->edit_mode},
     };
 }
@@ -1163,6 +1183,18 @@ static void DrawNoticeIcon(cairo_t* cr, NoticeKind kind, double cx, double cy, d
             cairo_move_to(cr, cx + r * 0.4, cy - r * 0.4); cairo_line_to(cr, cx - r * 0.4, cy + r * 0.4);
             cairo_stroke(cr);
             break;
+        case NoticeKind::Miss:
+            cairo_move_to(cr, cx - r * 0.45, cy - r * 0.45); cairo_line_to(cr, cx + r * 0.45, cy + r * 0.45);
+            cairo_move_to(cr, cx + r * 0.45, cy - r * 0.45); cairo_line_to(cr, cx - r * 0.45, cy + r * 0.45);
+            cairo_stroke(cr);
+            break;
+        case NoticeKind::Hit:
+            cairo_arc(cr, cx, cy, r * 0.35, 0, 2 * pi);
+            cairo_stroke(cr);
+            cairo_move_to(cr, cx - r * 0.6, cy); cairo_line_to(cr, cx + r * 0.6, cy);
+            cairo_move_to(cr, cx, cy - r * 0.6); cairo_line_to(cr, cx, cy + r * 0.6);
+            cairo_stroke(cr);
+            break;
         case NoticeKind::Kill:
             cairo_arc(cr, cx, cy - r * 0.12, r * 0.52, pi, 2 * pi);
             cairo_line_to(cr, cx + r * 0.52, cy + r * 0.2);
@@ -1231,10 +1263,12 @@ static void DrawNotices(cairo_t* cr, int W, int H) {
         double a = std::min(in, out);
         double r = kAccentR, g = kAccentG, b = kAccentB;
         switch (it->kind) {
-            case NoticeKind::Kill: r = 0.22; g = 0.42; b = 1.0; break;
-            case NoticeKind::On: r = 0.38; g = 0.72; b = 1.0; break;
-            case NoticeKind::Off: r = 0.42; g = 0.5; b = 0.72; break;
-            case NoticeKind::Bomb: r = 0.52; g = 0.78; b = 1.0; break;
+            case NoticeKind::Kill: r = 0.95; g = 0.25; b = 0.25; break;
+            case NoticeKind::Hit: r = kAccentR; g = kAccentG; b = kAccentB; break;
+            case NoticeKind::Miss: r = 0.95; g = 0.55; b = 0.2; break;
+            case NoticeKind::On: r = 0.38; g = 0.85; b = 0.45; break;
+            case NoticeKind::Off: r = 0.55; g = 0.6; b = 0.72; break;
+            case NoticeKind::Bomb: r = 1.0; g = 0.45; b = 0.2; break;
             default: break;
         }
         double tw = HudTextWidth(cr, it->text.c_str(), font, true);
@@ -1550,6 +1584,7 @@ static gboolean OnDraw(GtkWidget* w, cairo_t* cr, gpointer) {
     world::DrawArrows(cr, s_camera, players, *g_cfg);
     DrawSoundEsp(cr, s_camera);
     HudBeginFrame(a.height);
+    UpdateAccentFromTheme();
     DrawWatermark(cr);
     DrawKeybinds(cr);
     DrawBomb(cr, a.width);
@@ -2431,6 +2466,49 @@ static bool CheckCursorVisible(Display* d) {
     return visible;
 }
 
+
+static void WriteInternalFlags() {
+    if (!g_cfg) return;
+    const char* tmp = "/tmp/spx_internal.flags.tmp";
+    const char* dst = "/tmp/spx_internal.flags";
+    FILE* f = fopen(tmp, "w");
+    if (!f) return;
+    fprintf(f, "silent_aim %u\n",   settings::Enabled(g_cfg->silent_aim) ? 1u : 0u);
+    fprintf(f, "thirdperson %u\n",  settings::Enabled(g_cfg->thirdperson_internal) ? 1u : 0u);
+    fprintf(f, "night_mode %u\n",   settings::Enabled(g_cfg->night_mode_internal) ? 1u : 0u);
+    fprintf(f, "anti_aim %u\n",     settings::Enabled(g_cfg->anti_aim) ? 1u : 0u);
+    fclose(f);
+    rename(tmp, dst);
+}
+
+static void InternalFlagsThread() {
+    while (s_running.load()) {
+        WriteInternalFlags();
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+}
+
+
+static void WriteBridgeFlags() {
+    if (!off::g_EntityListPtr) return;
+    const char* tmp = "/tmp/spx_bridge.txt.tmp";
+    const char* dst = "/tmp/spx_bridge.txt";
+    FILE* f = fopen(tmp, "w");
+    if (!f) return;
+    fprintf(f, "entity_list 0x%lx\n", (unsigned long)off::g_EntityListPtr);
+    fprintf(f, "local_controller_idx %d\n", off::g_LocalControllerIdx);
+    fprintf(f, "client_base 0x%lx\n", (unsigned long)off::g_ClientBase);
+    fclose(f);
+    rename(tmp, dst);
+}
+
+static void BridgeThread() {
+    while (s_running.load()) {
+        WriteBridgeFlags();
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+}
+
 static void HotkeyThread() {
     struct HotkeyBinding { uint32_t* bind; uint32_t* feature; GSourceFunc action; };
     const HotkeyBinding bindings[] = {
@@ -2458,6 +2536,7 @@ static void HotkeyThread() {
         {&g_cfg->bind_md_override, &g_cfg->trigger_md_override, nullptr},
         {&g_cfg->bind_edge_bug, &g_cfg->edge_bug, nullptr},
         {&g_cfg->bind_edge_jump, &g_cfg->edge_jump, nullptr},
+        {&g_cfg->bind_silent_aim, &g_cfg->silent_aim, nullptr},
     };
     constexpr size_t kCount = sizeof(bindings) / sizeof(bindings[0]);
     Display* d = XOpenDisplay(nullptr);
@@ -2467,9 +2546,11 @@ static void HotkeyThread() {
     while (s_running.load()) {
         if (!IsCs2Active()) {
             s_cursor_active.store(false);
-        } else {
-            s_cursor_active.store(CheckCursorVisible(d));
+            for (size_t i = 0; i < kCount; i++) prev[i] = false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
         }
+        s_cursor_active.store(CheckCursorVisible(d));
 
         char keys[32]{};
         if (d) XQueryKeymap(d, keys);
@@ -2486,7 +2567,7 @@ static void HotkeyThread() {
             auto mode = binding.feature ? settings::GetBindMode(*g_cfg, binding.bind) : settings::BindMode::Toggle;
             bool mode_changed = applied_mode[i] != static_cast<int>(mode);
             applied_mode[i] = static_cast<int>(mode);
-            if (!kv) { prev[i] = false; continue; }
+            if (!kv || kv == 0xFFFFFFFFu || kv >= 0xFFFF00u) { prev[i] = false; continue; }
             if (mode == settings::BindMode::Toggle) {
                 if (now && !prev[i]) {
                     if (binding.action) g_idle_add(binding.action, nullptr);
@@ -2691,6 +2772,8 @@ int main(int argc, char** argv) {
     StartMediaThread();
     std::thread ft(FetchThread);
     std::thread ht(HotkeyThread);
+    std::thread ift(InternalFlagsThread); ift.detach();
+    std::thread btb(BridgeThread); btb.detach();
 
     g_timeout_add(100, Tick, nullptr);
     gtk_widget_add_tick_callback(g_area, OnFrameClock, nullptr, nullptr);

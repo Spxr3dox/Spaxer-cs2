@@ -172,4 +172,28 @@
     X(gui_x, Number) \
     X(gui_y, Number) \
     X(gui_w, Number) \
-    X(gui_h, Number)
+    X(gui_h, Number) \
+    X(hud_theme, Number) \
+    X(hud_accent_rgba, Color) \
+    X(silent_aim, Toggle) \
+    X(auto_scope, Toggle) \
+    X(long_jump, Toggle) \
+    X(slide_hop, Toggle) \
+    X(auto_pistol, Toggle) \
+    X(clan_tag_spin, Toggle) \
+    X(auto_accept, Toggle) \
+    X(damage_log, Toggle) \
+    X(auto_pickup, Toggle) \
+    X(bind_silent_aim, Bind) \
+    X(bind_auto_scope, Bind) \
+    X(bind_long_jump, Bind) \
+    X(bind_keystrokes, Bind) \
+    X(bind_notifications, Bind) \
+    X(rage_auto_fire, Toggle) \
+    X(bind_rage_auto_fire, Bind) \
+    X(anti_aim, Toggle) \
+    X(night_mode_internal, Toggle) \
+    X(thirdperson_internal, Toggle) \
+    X(bind_anti_aim, Bind) \
+    X(bind_night_mode_internal, Bind) \
+    X(bind_thirdperson_internal, Bind)

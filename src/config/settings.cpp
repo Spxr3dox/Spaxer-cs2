@@ -26,7 +26,7 @@ const char* Path() {
     return s_path;
 }
 
-static constexpr uint32_t kMigrationLevel = 19;
+static constexpr uint32_t kMigrationLevel = 21;
 
 static void DefaultEspExtras(Settings& s) {
     s.sound_esp_rgba = 0x00CCFFC0;
@@ -61,6 +61,30 @@ static void Migrate(Settings& s) {
     if (s.migration_level < 6) s.weather_density = 60;
     if (s.migration_level < 7) DefaultWorld(s);
     if (s.migration_level < 8) s.smoke_color_strength = 100;
+    if (s.migration_level < 20) {
+        s.hud_theme = 0;
+        s.hud_accent_rgba = 0;
+        s.silent_aim = 0;
+        s.auto_scope = 0;
+        s.long_jump = 0;
+        s.slide_hop = 0;
+        s.auto_pistol = 0;
+        s.clan_tag_spin = 0;
+        s.auto_accept = 0;
+        s.damage_log = 0;
+        s.auto_pickup = 0;
+        s.bind_silent_aim = 0;
+        s.bind_auto_scope = 0;
+        s.bind_long_jump = 0;
+    }
+    if (s.migration_level < 21) {
+        s.anti_aim = 0;
+        s.night_mode_internal = 0;
+        s.thirdperson_internal = 0;
+        s.bind_anti_aim = 0;
+        s.bind_night_mode_internal = 0;
+        s.bind_thirdperson_internal = 0;
+    }
     if (s.migration_level < 10) {
         s.esp_ammo = 1;
         s.hit_sound_volume = 70;
@@ -251,11 +275,37 @@ void Defaults(Settings& s) {
     s.ladder_jump = 0;
     s.keystrokes = 0;
     s.notifications = 1;
+    s.bind_keystrokes = 0;
+    s.bind_notifications = 0;
     s.hud_keys_x = s.hud_keys_y = -1;
+    s.hud_notif_x = s.hud_notif_y = -1;
+    s.hud_theme = 0;
+    s.hud_accent_rgba = 0;
+    s.silent_aim = 0;
+    s.auto_scope = 0;
+    s.long_jump = 0;
+    s.slide_hop = 0;
+    s.auto_pistol = 0;
+    s.clan_tag_spin = 0;
+    s.auto_accept = 0;
+    s.damage_log = 0;
+    s.auto_pickup = 0;
+    s.bind_silent_aim = 0;
+    s.bind_auto_scope = 0;
+    s.bind_long_jump = 0;
+    s.trigger_spread = 0;
+    s.bind_spread_trigger = 0;
+    s.spread_coverage = 50;
+    s.spread_head_only = 0;
+    s.gui_open = 0;
+    s.gui_x = s.gui_y = s.gui_w = s.gui_h = -1;
     SetBindMode(s, &s.bind_force_shot, BindMode::Hold);
     SetBindMode(s, &s.bind_md_override, BindMode::Hold);
     SetBindMode(s, &s.bind_edge_bug, BindMode::Hold);
     SetBindMode(s, &s.bind_edge_jump, BindMode::Hold);
+    s.rage_auto_fire = 0;
+    s.bind_rage_auto_fire = 0;
+    SetBindMode(s, &s.bind_rage_auto_fire, BindMode::Hold);
     s.migration_level = kMigrationLevel;
 }
 

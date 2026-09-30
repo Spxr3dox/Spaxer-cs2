@@ -61,9 +61,12 @@ static void RegisterSearchRow(GtkWidget* row, const char* label) {
 }
 
 static void SetBindLabel(GtkButton* btn, uint32_t kv) {
+    if (kv == 0 || kv == 0xFFFFFFFFu || kv >= 0xFFFF00u) { gtk_button_set_label(btn, "bind"); return; }
     const char* n = gdk_keyval_name(kv);
-    gtk_button_set_label(btn, kv ? (n ? n : "?") : "bind");
+    gtk_button_set_label(btn, n ? n : "bind");
 }
+
+static void InstallCss();
 
 static gboolean SyncWidgetsWithSettings(gpointer) {
     if (g_win) {
@@ -107,6 +110,12 @@ static gboolean SyncWidgetsWithSettings(gpointer) {
         double wanted = *binding.field / binding.scale;
         if (std::fabs(gtk_range_get_value(binding.range) - wanted) > 1e-6) gtk_range_set_value(binding.range, wanted);
     }
+    static uint32_t last_theme = 999, last_accent = 999;
+    if (g_cfg && (g_cfg->hud_theme != last_theme || g_cfg->hud_accent_rgba != last_accent)) {
+        last_theme = g_cfg->hud_theme;
+        last_accent = g_cfg->hud_accent_rgba;
+        InstallCss();
+    }
     return G_SOURCE_CONTINUE;
 }
 
@@ -118,7 +127,7 @@ static gboolean OnBindKey(GtkWidget* w, GdkEventKey* e, gpointer d) {
                                             e->hardware_keycode, GdkModifierType(0), 0,
                                             &base_layout_kv, nullptr, nullptr, nullptr) && base_layout_kv)
         kv = gdk_keyval_to_lower(base_layout_kv);
-    if (kv == GDK_KEY_Escape) kv = 0;
+    if (kv == GDK_KEY_Escape || kv == GDK_KEY_VoidSymbol || kv >= 0xFFFF00u || !gdk_keyval_name(kv)) kv = 0;
     *b->field = kv;
     SetBindLabel(b->btn, kv);
     g_signal_handlers_disconnect_by_func(w, (gpointer)OnBindKey, d);
@@ -733,25 +742,56 @@ static GtkWidget* MakeEspPreview() {
     return card;
 }
 
+static GtkCssProvider* s_css_provider = nullptr;
+
 static void InstallCss() {
-    const char* css =
+    if (!s_css_provider) {
+        s_css_provider = gtk_css_provider_new();
+        gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
+            GTK_STYLE_PROVIDER(s_css_provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    }
+    uint32_t rgba = g_cfg ? g_cfg->hud_accent_rgba : 0;
+    if (rgba == 0 && g_cfg) {
+        switch (g_cfg->hud_theme) {
+            case 1: rgba = 0xB47CFFFF; break;
+            case 2: rgba = 0x60D68CFF; break;
+            case 3: rgba = 0xFF6B6BFF; break;
+            case 4: rgba = 0xFFA24DFF; break;
+            case 5: rgba = 0xFF7BC8FF; break;
+            case 6: rgba = 0x50E3F2FF; break;
+            default: rgba = 0x4C8DFFFF; break;
+        }
+    }
+    if (rgba == 0) rgba = 0x4C8DFFFF;
+    int r = (rgba >> 24) & 0xFF;
+    int g = (rgba >> 16) & 0xFF;
+    int b = (rgba >>  8) & 0xFF;
+    char hex[8], hex_hover[8], hex_dark[8], rgba_16[32], rgba_02[32], rgba_12[32], rgba_28[32], rgba_24[32];
+    snprintf(hex, sizeof(hex), "#%02x%02x%02x", r, g, b);
+    snprintf(hex_hover, sizeof(hex_hover), "#%02x%02x%02x", std::min(255, r + 25), std::min(255, g + 25), std::min(255, b + 25));
+    snprintf(hex_dark, sizeof(hex_dark), "#%02x%02x%02x", std::max(0, r - 30), std::max(0, g - 30), std::max(0, b - 30));
+    snprintf(rgba_16, sizeof(rgba_16), "rgba(%d,%d,%d,0.16)", r, g, b);
+    snprintf(rgba_02, sizeof(rgba_02), "rgba(%d,%d,%d,0.02)", r, g, b);
+    snprintf(rgba_12, sizeof(rgba_12), "rgba(%d,%d,%d,0.12)", r, g, b);
+    snprintf(rgba_28, sizeof(rgba_28), "rgba(%d,%d,%d,0.28)", r, g, b);
+    snprintf(rgba_24, sizeof(rgba_24), "rgba(%d,%d,%d,0.24)", r, g, b);
+
+    std::string css =
         "* { font-family: 'Inter', 'SF Pro Text', 'Segoe UI', sans-serif; font-size: 12px; }"
         "window { background: transparent; }"
         "#root { background: #0b0c11; border-radius: 10px; border: 1px solid #1d2029; }"
         "#titlebar { background: #0e0f15; border-bottom: 1px solid #1a1c25; border-radius: 10px 10px 0 0; padding: 10px 12px 10px 18px; }"
-        ".logo { font-size: 15px; font-weight: 800; letter-spacing: 2px; }"
+        ".logo { font-size: 15px; font-weight: 800; letter-spacing: 2px; color: " + std::string(hex) + "; }"
         "#search { background: #0b0c11; color: #e4e6ed; border: 1px solid #1d2029; border-radius: 6px; min-height: 26px; padding: 0 8px; margin-left: 16px; }"
-        "#search:focus { border-color: #4c8dff; }"
+        "#search:focus { border-color: " + std::string(hex) + "; }"
         ".close-button { background: transparent; color: #5c6070; border: none; box-shadow: none; padding: 2px 8px; font-size: 13px; }"
         ".close-button:hover { color: #ffffff; background: #1a1d27; }"
-
         "#sidebar { background: #0e0f15; border-right: 1px solid #1a1c25; padding: 8px 10px 10px 10px; border-radius: 0 0 0 10px; }"
         ".sidebar-header { color: #4a4e5c; font-size: 10px; font-weight: 800; letter-spacing: 1.4px; margin: 14px 10px 4px 10px; }"
         ".sidebar-item { background: transparent; color: #9a9eab; border: none; border-radius: 6px; padding: 7px 10px; margin: 1px 0; box-shadow: none; font-size: 13px; font-weight: 600; }"
         ".sidebar-item:hover { background: #141620; color: #e4e6ed; }"
-        ".sidebar-item.active { background: linear-gradient(90deg, rgba(76,141,255,0.16), rgba(76,141,255,0.02)); color: #ffffff; box-shadow: inset 2px 0 0 #4c8dff; }"
+        ".sidebar-item.active { background: linear-gradient(90deg, " + std::string(rgba_16) + ", " + std::string(rgba_02) + "); color: #ffffff; box-shadow: inset 2px 0 0 " + std::string(hex) + "; }"
         ".sidebar-icon { min-width: 18px; margin-right: 2px; }"
-
         ".configs { padding: 10px; margin: 8px 0; background: #11131a; border-radius: 8px; border: 1px solid #1c1f29; }"
         ".configs-title { color: #4a4e5c; font-size: 10px; font-weight: 800; letter-spacing: 1.4px; margin-bottom: 4px; }"
         ".configs entry { min-height: 26px; padding: 4px 10px; font-size: 11px; background: #0b0c11; color: #e4e6ed; border-radius: 6px; border: 1px solid #1d2029; }"
@@ -760,23 +800,21 @@ static void InstallCss() {
         ".configs combobox button { min-height: 26px; padding: 4px 10px; background: transparent; border: none; box-shadow: none; }"
         "combobox window menu { background: #11131a; border-radius: 6px; padding: 4px; border: 1px solid #1d2029; }"
         "combobox window menu menuitem { color: #e4e6ed; border-radius: 4px; padding: 6px 10px; }"
-        "combobox window menu menuitem:hover { background: #4c8dff; color: white; }"
-
+        "combobox window menu menuitem:hover { background: " + std::string(hex) + "; color: white; }"
         ".profile { padding: 8px 10px; margin: 4px 0 0 0; background: #11131a; border-radius: 8px; border: 1px solid #1c1f29; }"
         ".profile .avatar { border-radius: 16px; }"
         ".profile-name { color: #ffffff; font-weight: 700; font-size: 12px; }"
-        ".profile-sub  { color: #4c8dff; font-size: 10px; font-weight: 600; }"
-
+        ".profile-sub  { color: " + std::string(hex) + "; font-size: 10px; font-weight: 600; }"
         "stack { background: transparent; }"
         ".page { padding: 14px 16px 18px 16px; }"
         ".card { background: #11131a; border-radius: 8px; border: 1px solid #1c1f29; }"
         ".loader-status { color: #7a7f8e; font-weight: 700; }"
-        ".loader-status.loader-on { color: #4c8dff; }"
-        "button.suggested-action { background: #4c8dff; color: #ffffff; border-color: #4c8dff; }"
-        "button.suggested-action:hover { background: #5b98ff; }"
+        ".loader-status.loader-on { color: " + std::string(hex) + "; }"
+        "button.suggested-action { background: " + std::string(hex) + "; color: #ffffff; border-color: " + std::string(hex) + "; }"
+        "button.suggested-action:hover { background: " + std::string(hex_hover) + "; }"
         ".dim-label { color: #7a7f8e; padding: 6px 14px; }"
         "entry { background: #151823; border: 1px solid #262a3a; color: #e4e6ed; border-radius: 6px; padding: 4px 8px; min-height: 22px; }"
-        "entry:focus { border-color: #4c8dff; }"
+        "entry:focus { border-color: " + std::string(hex) + "; }"
         "popover { background: #11131a; border: 1px solid #1c1f29; border-radius: 8px; }"
         "popover check { min-width: 14px; min-height: 14px; }"
         ".card > button { margin: 4px 14px; }"
@@ -785,43 +823,35 @@ static void InstallCss() {
         ".row { padding: 6px 14px; }"
         ".row:hover { background: #141620; }"
         ".row label { color: #c9ccd6; font-size: 12px; }"
-
         "checkbutton { padding: 0; min-height: 0; }"
         "checkbutton check { min-width: 14px; min-height: 14px; margin: 0; border-radius: 4px; background: #1d2030; border: 1px solid #2c3142; color: transparent; }"
-        "checkbutton check:checked { background: #4c8dff; border-color: #4c8dff; color: #ffffff; -gtk-icon-source: -gtk-icontheme('object-select-symbolic'); }"
+        "checkbutton check:checked { background: " + std::string(hex) + "; border-color: " + std::string(hex) + "; color: #ffffff; -gtk-icon-source: -gtk-icontheme('object-select-symbolic'); }"
         "scale:disabled { opacity: 0.4; }"
         "switch { min-width: 34px; min-height: 18px; background: #1d2030; border-radius: 9px; border: 1px solid #262a3a; padding: 0; }"
-        "switch:checked { background: #4c8dff; border-color: #4c8dff; }"
+        "switch:checked { background: " + std::string(hex) + "; border-color: " + std::string(hex) + "; }"
         "switch slider { background: #8a8fa0; border-radius: 50%; min-width: 14px; min-height: 14px; margin: 2px; border: none; box-shadow: none; }"
         "switch:checked slider { background: #ffffff; }"
-
         "scale { padding: 6px 0; }"
         "scale trough { background: #1d2030; border-radius: 2px; min-height: 4px; border: none; }"
-        "scale highlight { background: linear-gradient(90deg, #2f6fe0, #4c8dff); border-radius: 2px; }"
-        "scale slider { background: #ffffff; border-radius: 50%; min-width: 12px; min-height: 12px; margin: -5px; border: 2px solid #4c8dff; box-shadow: none; }"
-        "scale value { color: #4c8dff; font-size: 11px; font-weight: 700; margin-left: 6px; }"
-
+        "scale highlight { background: linear-gradient(90deg, " + std::string(hex_dark) + ", " + std::string(hex) + "); border-radius: 2px; }"
+        "scale slider { background: #ffffff; border-radius: 50%; min-width: 12px; min-height: 12px; margin: -5px; border: 2px solid " + std::string(hex) + "; box-shadow: none; }"
+        "scale value { color: " + std::string(hex) + "; font-size: 11px; font-weight: 700; margin-left: 6px; }"
         "button { background: #171a24; color: #e4e6ed; border: 1px solid #232736; border-radius: 6px; padding: 4px 10px; font-weight: 600; font-size: 11px; box-shadow: none; }"
         "button:hover { background: #1d2130; border-color: #2d3346; }"
-        "button:active { background: #4c8dff; border-color: #4c8dff; }"
-        ".bind-badge { background: rgba(76, 141, 255, 0.12); color: #7fa7ff; border: 1px solid rgba(76, 141, 255, 0.28); border-radius: 4px; padding: 2px 7px; font-family: monospace; font-size: 10px; font-weight: 700; margin-right: 4px; }"
-        ".bind-badge:hover { background: rgba(76, 141, 255, 0.24); color: #ffffff; }"
+        "button:active { background: " + std::string(hex) + "; border-color: " + std::string(hex) + "; }"
+        ".bind-badge { background: " + std::string(rgba_12) + "; color: #7fa7ff; border: 1px solid " + std::string(rgba_28) + "; border-radius: 4px; padding: 2px 7px; font-family: monospace; font-size: 10px; font-weight: 700; margin-right: 4px; }"
+        ".bind-badge:hover { background: " + std::string(rgba_24) + "; color: #ffffff; }"
         ".bind-badge.capturing { background: rgba(255, 159, 10, 0.22); color: #ff9f0a; border-color: #ff9f0a; }"
         "menu { background: #11131a; border-radius: 6px; padding: 4px; border: 1px solid #1d2029; }"
         "menu menuitem { color: #e4e6ed; border-radius: 4px; padding: 5px 12px; font-size: 11px; }"
-        "menu menuitem:hover { background: #4c8dff; color: white; }"
+        "menu menuitem:hover { background: " + std::string(hex) + "; color: white; }"
         ".color-btn { padding: 2px; border-radius: 5px; background: #171a24; }"
         "combobox button { background: #171a24; border: 1px solid #232736; }"
-
         "scrollbar { background: transparent; }"
         "scrollbar slider { background: #232736; border-radius: 3px; min-width: 5px; min-height: 30px; }"
-        "scrollbar slider:hover { background: #4c8dff; }";
+        "scrollbar slider:hover { background: " + std::string(hex) + "; }";
 
-    GtkCssProvider* p = gtk_css_provider_new();
-    gtk_css_provider_load_from_data(p, css, -1, nullptr);
-    gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
-        GTK_STYLE_PROVIDER(p), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    g_object_unref(p);
+    gtk_css_provider_load_from_data(s_css_provider, css.c_str(), -1, nullptr);
 }
 
 static const char* CardTitle(GtkWidget* card) {
@@ -931,6 +961,7 @@ static std::string LineIconSvg(const char* glyph) {
 }
 
 static const char* kGlyphCrosshair = "<circle cx=\"12\" cy=\"12\" r=\"8\"/><line x1=\"12\" y1=\"1.5\" x2=\"12\" y2=\"6\"/><line x1=\"12\" y1=\"18\" x2=\"12\" y2=\"22.5\"/><line x1=\"1.5\" y1=\"12\" x2=\"6\" y2=\"12\"/><line x1=\"18\" y1=\"12\" x2=\"22.5\" y2=\"12\"/><circle cx=\"12\" cy=\"12\" r=\"1.2\"/>";
+static const char* kGlyphRage = "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M8 15h8\"/><path d=\"M9 9h.01\"/><path d=\"M15 9h.01\"/><path d=\"M10 13l2-2 2 2\"/>";
 static const char* kGlyphMovement = "<polyline points=\"5 9 2 12 5 15\"/><polyline points=\"9 5 12 2 15 5\"/><polyline points=\"15 19 12 22 9 19\"/><polyline points=\"19 9 22 12 19 15\"/><line x1=\"2\" y1=\"12\" x2=\"22\" y2=\"12\"/><line x1=\"12\" y1=\"2\" x2=\"12\" y2=\"22\"/>";
 static const char* kGlyphEsp = "<circle cx=\"12\" cy=\"7\" r=\"4\"/><path d=\"M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1\"/><rect x=\"2\" y=\"1.5\" width=\"20\" height=\"21\" rx=\"2\" stroke-dasharray=\"3 3\"/>";
 static const char* kGlyphHud = "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\"/><line x1=\"9\" y1=\"21\" x2=\"9\" y2=\"9\"/>";
@@ -940,6 +971,7 @@ static const char* kGlyphScripts = "<polyline points=\"16 18 22 12 16 6\"/><poly
 static const char* kGlyphFile = "<path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"/><polyline points=\"14 2 14 8 20 8\"/><line x1=\"8\" y1=\"13\" x2=\"16\" y2=\"13\"/><line x1=\"8\" y1=\"17\" x2=\"13\" y2=\"17\"/>";
 
 static const std::string s_svg_legit = LineIconSvg(kGlyphCrosshair);
+static const std::string s_svg_rage = LineIconSvg(kGlyphRage);
 static const std::string s_svg_movement = LineIconSvg(kGlyphMovement);
 static const std::string s_svg_esp = LineIconSvg(kGlyphEsp);
 static const std::string s_svg_hud = LineIconSvg(kGlyphHud);
@@ -1613,6 +1645,9 @@ static GtkWidget* BuildGui() {
 
         GtkWidget* aim = MakeCard("AIMBOT");
         gtk_box_pack_start(GTK_BOX(aim), MakeRow("Enabled",       &g_cfg->aimbot_enabled,      &g_cfg->bind_aimbot), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(aim), MakeRow("Silent aim",    &g_cfg->silent_aim,          &g_cfg->bind_silent_aim), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(aim), MakeRow("Auto scope",    &g_cfg->auto_scope,          &g_cfg->bind_auto_scope), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(aim), MakeRow("Auto pistol",   &g_cfg->auto_pistol,         nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(aim), MakeComboRow("Aim key", &g_cfg->aimbot_key_mode, {"Always", "Left mouse", "Right mouse", "Mouse side"}), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(aim), MakeComboRow("Target priority", &g_cfg->aimbot_target_mode, {"Crosshair", "Distance", "Lowest HP"}), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(aim), MakeRow("AimLock",       &g_cfg->aimbot_lock,         nullptr), FALSE, FALSE, 0);
@@ -1669,6 +1704,33 @@ static GtkWidget* BuildGui() {
     }
     {
         GtkWidget* page = MakePage();
+
+        GtkWidget* rage = MakeCard("RAGEBOT");
+        gtk_box_pack_start(GTK_BOX(rage), MakeRow("Silent aim", &g_cfg->silent_aim, &g_cfg->bind_silent_aim), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(rage), MakeRow("Auto fire", &g_cfg->rage_auto_fire, &g_cfg->bind_rage_auto_fire), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(rage), MakeRow("Auto scope", &g_cfg->auto_scope, &g_cfg->bind_auto_scope), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(rage), MakeRow("Auto pistol", &g_cfg->auto_pistol, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(rage), MakeRow("Through walls", &g_cfg->aimbot_thru_walls, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(rage), MakeRow("Autowall", &g_cfg->autowall, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(rage), MakeFovSliderRow("Silent FOV", &g_cfg->aimbot_fov_x100), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(rage), MakeSliderRow("Hitchance %", &g_cfg->trigger_hitchance, 0, 100, 1), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(rage), MakeCheckSliderRow("Min damage", &g_cfg->min_damage_enabled, &g_cfg->autowall_min_damage, 1, 100, 1), FALSE, FALSE, 0);
+        Place(page, rage, false);
+
+        GtkWidget* target_card = MakeCard("TARGET SELECTION");
+        gtk_box_pack_start(GTK_BOX(target_card), MakeComboRow("Target priority", &g_cfg->aimbot_target_mode, {"Crosshair", "Distance", "Lowest HP"}), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(target_card), MakeRow("Head only", &g_cfg->aimbot_point_head, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(target_card), MakeRow("Neck", &g_cfg->aimbot_point_neck, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(target_card), MakeRow("Chest", &g_cfg->aimbot_point_chest, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(target_card), MakeRow("Pelvis", &g_cfg->aimbot_point_pelvis, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(target_card), MakeRow("AimLock", &g_cfg->aimbot_lock, nullptr), FALSE, FALSE, 0);
+        Place(page, target_card, true);
+
+        gtk_stack_add_named(GTK_STACK(g_stack), page, "rage");
+        AddSidebarItemSvg(sidebar, s_svg_rage.c_str(), "rage", "Rage bot");
+    }
+    {
+        GtkWidget* page = MakePage();
         GtkWidget* bhop = MakeCard("BUNNY HOP");
         gtk_box_pack_start(GTK_BOX(bhop), MakeRow("Enabled", &g_cfg->bunnyhop, &g_cfg->bind_bunnyhop), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(bhop), MakeRow("Auto jump", &g_cfg->bhop_auto_jump, nullptr), FALSE, FALSE, 0);
@@ -1690,9 +1752,11 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(ladder), MakeRow("Ladder jump assist", &g_cfg->ladder_jump, nullptr), FALSE, FALSE, 0);
         Place(page, ladder, true);
 
-        GtkWidget* edge = MakeCard("EDGE");
+        GtkWidget* edge = MakeCard("EDGE & ADVANCED");
         gtk_box_pack_start(GTK_BOX(edge), MakeRow("Edge jump", &g_cfg->edge_jump, &g_cfg->bind_edge_jump), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(edge), MakeRow("Edge bug", &g_cfg->edge_bug, &g_cfg->bind_edge_bug), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(edge), MakeRow("Edge bug",  &g_cfg->edge_bug,  &g_cfg->bind_edge_bug),  FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(edge), MakeRow("Long jump", &g_cfg->long_jump, &g_cfg->bind_long_jump), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(edge), MakeRow("Slide hop", &g_cfg->slide_hop, nullptr),                FALSE, FALSE, 0);
         Place(page, edge, true);
         gtk_stack_add_named(GTK_STACK(g_stack), page, "movement");
         AddSidebarHeader(sidebar, "MOVEMENT");
@@ -1768,6 +1832,12 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(hud), MakeRow("Notifications",   &g_cfg->notifications, nullptr),             FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(hud), MakeRow("Hitmarker",       &g_cfg->hitmarker,  nullptr),                FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(hud), MakeRow("Radar",           &g_cfg->radar,      nullptr),                FALSE, FALSE, 0);
+
+        GtkWidget* theme_card = MakeCard("THEME");
+        gtk_box_pack_start(GTK_BOX(theme_card), MakeComboRow("Preset",
+            &g_cfg->hud_theme, {"Blue", "Purple", "Green", "Red", "Orange", "Pink", "Cyan"}), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(theme_card), MakeColorRow("Custom accent (0 = use preset)", &g_cfg->hud_accent_rgba), FALSE, FALSE, 0);
+        Place(page, theme_card, true);
         Place(page, hud, false);
 
         GtkWidget* cross = MakeCard("CROSSHAIR");
@@ -1822,7 +1892,18 @@ static GtkWidget* BuildGui() {
         GtkWidget* misc = MakeCard("MISC");
         gtk_box_pack_start(GTK_BOX(misc), MakeRow("Toggle GUI (bind)", nullptr, &g_cfg->bind_toggle_gui), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(misc), MakeRow("Edit HUD",  &g_cfg->edit_mode, &g_cfg->bind_edit_hud), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(misc), MakeRow("Auto accept", &g_cfg->auto_accept, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(misc), MakeRow("Clan tag spin", &g_cfg->clan_tag_spin, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(misc), MakeRow("Auto pickup", &g_cfg->auto_pickup, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(misc), MakeRow("Damage log", &g_cfg->damage_log, nullptr), FALSE, FALSE, 0);
         Place(page, misc, true);
+        GtkWidget* internal_card = MakeCard("INTERNAL MODULES");
+        gtk_box_pack_start(GTK_BOX(internal_card), MakeRow("Silent aim",      &g_cfg->silent_aim, &g_cfg->bind_silent_aim), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(internal_card), MakeRow("Thirdperson",     &g_cfg->thirdperson_internal, &g_cfg->bind_thirdperson_internal), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(internal_card), MakeRow("Night mode",      &g_cfg->night_mode_internal,  &g_cfg->bind_night_mode_internal), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(internal_card), MakeRow("Anti aim",        &g_cfg->anti_aim,             &g_cfg->bind_anti_aim), FALSE, FALSE, 0);
+        Place(page, internal_card, true);
+
         GtkWidget* sound = MakeCard("HIT SOUND");
         gtk_box_pack_start(GTK_BOX(sound), MakeComboRow("Hit sound", &g_cfg->hit_sound, {"Off", "Click", "Ding", "Bell", "Pop"}), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(sound), MakeSliderRow("Hit sound volume", &g_cfg->hit_sound_volume, 0, 100, 1), FALSE, FALSE, 0);
