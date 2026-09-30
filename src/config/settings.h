@@ -236,6 +236,9 @@ struct Settings {
     uint32_t grenade_helper_active_color_rgba;
     uint32_t grenade_helper_aim_color_rgba;
     int32_t  grenade_helper_save_token;
+    uint32_t grenade_helper_auto_throw;
+    uint32_t bind_grenade_helper_throw;
+    uint32_t grenade_timer_rings;
 };
 
 namespace settings {

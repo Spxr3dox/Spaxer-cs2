@@ -89,7 +89,11 @@ static void Migrate(Settings& s) {
         s.grenade_helper_active_color_rgba = 0x32DC64FF;
         s.grenade_helper_aim_color_rgba = 0xFFB400DC;
         s.grenade_helper_save_token = 0;
+        s.grenade_helper_auto_throw = 1;
+        s.bind_grenade_helper_throw = 0;
+        s.grenade_timer_rings = 1;
         SetBindMode(s, &s.bind_grenade_helper_aim, BindMode::Hold);
+        SetBindMode(s, &s.bind_grenade_helper_throw, BindMode::Hold);
         SetBindMode(s, &s.bind_grenade_helper_save, BindMode::Toggle);
         SetBindMode(s, &s.bind_grenade_helper_remove, BindMode::Toggle);
     }
@@ -333,7 +337,11 @@ void Defaults(Settings& s) {
     s.grenade_helper_active_color_rgba = 0x32DC64FF;
     s.grenade_helper_aim_color_rgba = 0xFFB400DC;
     s.grenade_helper_save_token = 0;
+    s.grenade_helper_auto_throw = 1;
+    s.bind_grenade_helper_throw = 0;
+    s.grenade_timer_rings = 1;
     SetBindMode(s, &s.bind_grenade_helper_aim, BindMode::Hold);
+    SetBindMode(s, &s.bind_grenade_helper_throw, BindMode::Hold);
     SetBindMode(s, &s.bind_grenade_helper_save, BindMode::Toggle);
     SetBindMode(s, &s.bind_grenade_helper_remove, BindMode::Toggle);
     s.migration_level = kMigrationLevel;

@@ -83,9 +83,9 @@ namespace off {
 
     inline uintptr_t m_pReserveAmmo = 0;
 
-    inline uintptr_t m_pObserverServices = 0;
-    inline uintptr_t m_hObserverTarget   = 0;
-    inline uintptr_t m_iObserverMode     = 0;
+    inline uintptr_t m_pObserverServices = 0x1290;
+    inline uintptr_t m_hObserverTarget   = 0x4C;
+    inline uintptr_t m_iObserverMode     = 0x48;
 
     inline uintptr_t m_bBombTicking      = 0;
     inline uintptr_t m_bBombDefused      = 0;

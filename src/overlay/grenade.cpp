@@ -13,6 +13,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <vector>
+#include <thread>
 #include <sys/stat.h>
 #include <linux/input.h>
 #include <gdk/gdkkeysyms.h>
@@ -459,7 +460,81 @@ double NowSeconds() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-void DrawThrown(cairo_t* cr, const render::Camera& camera, int local_team) {
+struct ActiveZone {
+    Vec3 pos;
+    double start_time;
+    float duration;
+    GrenadeKind kind;
+    int team;
+};
+
+static void DrawTimerRing3D(cairo_t* cr, const render::Camera& camera, const Vec3& center, float radius, float progress, float time_left, GrenadeKind kind, const Style& style) {
+    constexpr int kSegments = 40;
+    std::vector<std::pair<float, float>> pts;
+    pts.reserve(kSegments + 1);
+    for (int i = 0; i <= kSegments; i++) {
+        float angle = i * 2.f * kPi / kSegments;
+        float sx, sy;
+        if (camera.Project({center.x + std::cos(angle) * radius, center.y + std::sin(angle) * radius, center.z}, sx, sy)) {
+            pts.push_back({sx, sy});
+        }
+    }
+    if (pts.size() >= 3) {
+        cairo_new_path(cr);
+        cairo_move_to(cr, pts[0].first, pts[0].second);
+        for (size_t i = 1; i < pts.size(); i++) cairo_line_to(cr, pts[i].first, pts[i].second);
+        cairo_close_path(cr);
+        cairo_set_source_rgba(cr, style.r, style.g, style.b, style.a * 0.12);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgba(cr, style.r, style.g, style.b, style.a * 0.40);
+        cairo_set_line_width(cr, 1.5);
+        cairo_stroke(cr);
+    }
+
+    int active_segs = std::clamp(static_cast<int>(progress * kSegments), 0, kSegments);
+    if (active_segs >= 2) {
+        std::vector<std::pair<float, float>> prog_pts;
+        for (int i = 0; i <= active_segs; i++) {
+            float angle = -kPi * 0.5f + i * 2.f * kPi / kSegments;
+            float sx, sy;
+            if (camera.Project({center.x + std::cos(angle) * radius, center.y + std::sin(angle) * radius, center.z}, sx, sy)) {
+                prog_pts.push_back({sx, sy});
+            }
+        }
+        if (prog_pts.size() >= 2) {
+            cairo_new_path(cr);
+            cairo_move_to(cr, prog_pts[0].first, prog_pts[0].second);
+            for (size_t i = 1; i < prog_pts.size(); i++) cairo_line_to(cr, prog_pts[i].first, prog_pts[i].second);
+            cairo_set_source_rgba(cr, style.r, style.g, style.b, style.a * 0.95);
+            cairo_set_line_width(cr, 3.0);
+            cairo_stroke(cr);
+        }
+    }
+
+    float csx, csy;
+    if (camera.Project(center, csx, csy)) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%s %.1fs", (kind == GrenadeKind::Smoke ? "SMOKE" : "FIRE"), time_left);
+        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 11.0);
+        cairo_text_extents_t ext;
+        cairo_text_extents(cr, buf, &ext);
+        float bx = csx - ext.width * 0.5f;
+        float by = csy;
+        cairo_rectangle(cr, bx - 6.f, by - ext.height - 3.f, ext.width + 12.f, ext.height + 6.f);
+        cairo_set_source_rgba(cr, 0.05, 0.06, 0.09, 0.88);
+        cairo_fill(cr);
+        cairo_move_to(cr, bx, by);
+        cairo_text_path(cr, buf);
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.9);
+        cairo_set_line_width(cr, 2.5);
+        cairo_stroke_preserve(cr);
+        cairo_set_source_rgba(cr, style.r, style.g, style.b, 1.0);
+        cairo_fill(cr);
+    }
+}
+
+void DrawThrown(cairo_t* cr, const render::Camera& camera, int local_team, const Settings& settings) {
     std::vector<ThrownGrenade> grenades;
     {
         std::lock_guard<std::mutex> lock(g_hud.grenades_mtx);
@@ -467,17 +542,28 @@ void DrawThrown(cairo_t* cr, const render::Camera& camera, int local_team) {
     }
     struct Sample { Vec3 pos; double time; Vec3 velocity; };
     static std::unordered_map<uintptr_t, Sample> samples;
+    static std::unordered_map<uintptr_t, ActiveZone> active_zones;
     double now = NowSeconds();
     std::erase_if(samples, [&](const auto& entry) {
         return std::none_of(grenades.begin(), grenades.end(), [&](const ThrownGrenade& g) { return g.entity == entry.first; });
     });
     for (const ThrownGrenade& grenade : grenades) {
-        if (grenade.kind == GrenadeKind::Smoke && off::m_bDidSmokeEffect &&
-            g_proc.Read<uint8_t>(grenade.entity + off::m_bDidSmokeEffect))
-            continue;
+        if (grenade.kind == GrenadeKind::Smoke) {
+            bool did_smoke = off::m_bDidSmokeEffect && g_proc.Read<uint8_t>(grenade.entity + off::m_bDidSmokeEffect);
+            if (did_smoke) {
+                Vec3 origin = game::Origin(grenade.entity);
+                if (std::isfinite(origin.x) && origin.x != 0.f) {
+                    active_zones.try_emplace(grenade.entity, ActiveZone{origin, now, 20.0f, GrenadeKind::Smoke, grenade.team});
+                }
+                continue;
+            }
+        }
         Vec3 pos = game::Origin(grenade.entity);
         Vec3 vel = off::m_vecVelocity ? g_proc.Read<Vec3>(grenade.entity + off::m_vecVelocity) : Vec3{};
         if (!std::isfinite(pos.x) || !std::isfinite(vel.x)) continue;
+        if (grenade.kind == GrenadeKind::Fire && std::hypot(vel.x, vel.y, vel.z) < kMovingSpeed) {
+            active_zones.try_emplace(grenade.entity, ActiveZone{pos, now, 7.0f, GrenadeKind::Fire, grenade.team});
+        }
         auto [sample, inserted] = samples.try_emplace(grenade.entity, Sample{pos, now, {}});
         double dt = now - sample->second.time;
         if (!inserted && dt > 0.005) {
@@ -491,6 +577,22 @@ void DrawThrown(cairo_t* cr, const render::Camera& camera, int local_team) {
         if (time_left <= 0.f) continue;
         const Style& style = local_team && grenade.team == local_team ? kFriendlyStyle : kEnemyStyle;
         DrawPath(cr, camera, Fly(pos, vel, grenade.kind, time_left), grenade.kind, style);
+    }
+    std::erase_if(active_zones, [&](const auto& entry) {
+        return (now - entry.second.start_time) >= entry.second.duration;
+    });
+    if (settings::Enabled(settings.grenade_timer_rings)) {
+        for (const auto& [entity, zone] : active_zones) {
+            float time_left = static_cast<float>(zone.duration - (now - zone.start_time));
+            if (time_left <= 0.f) continue;
+            float progress = time_left / zone.duration;
+            Style st = (zone.kind == GrenadeKind::Smoke) ? Style{0.45, 0.75, 1.0, 0.95} : Style{1.0, 0.42, 0.15, 0.95};
+            if (local_team && zone.team && zone.team != local_team && zone.kind == GrenadeKind::Fire) {
+                st = Style{1.0, 0.25, 0.2, 0.95};
+            }
+            float radius = (zone.kind == GrenadeKind::Smoke) ? 144.f : 150.f;
+            DrawTimerRing3D(cr, camera, zone.pos, radius, progress, time_left, zone.kind, st);
+        }
     }
 }
 
@@ -756,6 +858,47 @@ static void DrawLineups(cairo_t* cr, const render::Camera& camera, const Setting
                 cairo_stroke_preserve(cr);
                 cairo_set_source_rgba(cr, 0.25, 0.95, 0.45, 1.0);
                 cairo_fill(cr);
+
+                if (settings::Enabled(settings.grenade_helper_auto_throw)) {
+                    bool throw_act = IsBindActive(settings.bind_grenade_helper_throw);
+                    if (settings.bind_grenade_helper_throw == 0) throw_act = g_input.IsMouseDown(1) || g_input.IsMouseDown(2);
+                    if (throw_act) {
+                        static std::atomic<bool> s_throwing{false};
+                        if (!s_throwing.exchange(true)) {
+                            ThrowType tt = lineup.throw_type;
+                            std::thread([tt]() {
+                                if (tt == ThrowType::Jumpthrow) {
+                                    g_input.SetKey(KEY_SPACE, true);
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(15));
+                                    g_input.SetMouseButton(1, false);
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(35));
+                                    g_input.SetKey(KEY_SPACE, false);
+                                } else if (tt == ThrowType::Runthrow) {
+                                    g_input.SetKey(KEY_W, true);
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                                    g_input.SetKey(KEY_SPACE, true);
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(15));
+                                    g_input.SetMouseButton(1, false);
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+                                    g_input.SetKey(KEY_SPACE, false);
+                                    g_input.SetKey(KEY_W, false);
+                                } else if (tt == ThrowType::Crouch) {
+                                    g_input.HoldCrouch(true);
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                                    g_input.SetMouseButton(1, false);
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                                    g_input.HoldCrouch(false);
+                                } else {
+                                    g_input.SetMouseButton(1, false);
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                                    g_input.ClickLeft();
+                                }
+                                std::this_thread::sleep_for(std::chrono::milliseconds(400));
+                                s_throwing.store(false);
+                            }).detach();
+                        }
+                    }
+                }
             }
 
             if (is_aligned && settings::Enabled(settings.grenade_helper_aim) && aim_assist_key) {
@@ -794,7 +937,7 @@ void Draw(cairo_t* cr, const render::Camera& camera, const Settings& settings) {
     cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
     uintptr_t pawn = game::LocalPawn();
-    if (settings::Enabled(settings.grenade_world)) DrawThrown(cr, camera, pawn ? game::Team(pawn) : 0);
+    if (settings::Enabled(settings.grenade_world)) DrawThrown(cr, camera, pawn ? game::Team(pawn) : 0, settings);
     GrenadeKind kind;
     if (settings::Enabled(settings.grenade_trajectory) && pawn && KindForWeapon(game::ActiveWeaponDefinitionIndex(pawn), kind))
         DrawPath(cr, camera, PredictOwnThrow(pawn, ViewForward(camera), kind), kind, kOwnStyle);

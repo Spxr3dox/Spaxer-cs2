@@ -1854,6 +1854,7 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(helper), MakeRow("Only when holding grenade", &g_cfg->grenade_helper_only_held, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(helper), MakeRow("Draw line to target", &g_cfg->grenade_helper_draw_line, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(helper), MakeRow("Aim assist", &g_cfg->grenade_helper_aim, &g_cfg->bind_grenade_helper_aim), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(helper), MakeRow("Auto-throw on lineup", &g_cfg->grenade_helper_auto_throw, &g_cfg->bind_grenade_helper_throw), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(helper), MakeRow("Quick save spot (bind)", nullptr, &g_cfg->bind_grenade_helper_save), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(helper), MakeRow("Quick remove nearest (bind)", nullptr, &g_cfg->bind_grenade_helper_remove), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(helper), MakeColorRow("Spot color", &g_cfg->grenade_helper_spot_color_rgba), FALSE, FALSE, 0);
@@ -1864,6 +1865,7 @@ static GtkWidget* BuildGui() {
         GtkWidget* pred = MakeCard("PREDICTION & TRAJECTORY");
         gtk_box_pack_start(GTK_BOX(pred), MakeRow("My grenade trajectory", &g_cfg->grenade_trajectory, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(pred), MakeRow("Thrown grenades (world)", &g_cfg->grenade_world, nullptr), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(pred), MakeRow("Smoke & Fire timer rings (3D)", &g_cfg->grenade_timer_rings, nullptr), FALSE, FALSE, 0);
         Place(page, pred, true);
 
         GtkWidget* creator = MakeCard("LINEUP MANAGER");

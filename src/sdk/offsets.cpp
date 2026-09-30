@@ -287,9 +287,9 @@ void ResetProcessState() {
     m_glowColorOverride = 0;
     m_bGlowing = 0;
     m_pReserveAmmo = 0;
-    m_pObserverServices = 0;
-    m_hObserverTarget = 0;
-    m_iObserverMode = 0;
+    m_pObserverServices = 0x1290;
+    m_hObserverTarget = 0x4C;
+    m_iObserverMode = 0x48;
     m_bBombTicking = 0;
     m_bBombDefused = 0;
     m_bBeingDefused = 0;

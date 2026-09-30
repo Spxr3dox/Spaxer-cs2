@@ -207,4 +207,7 @@
     X(grenade_helper_spot_color_rgba, Color) \
     X(grenade_helper_active_color_rgba, Color) \
     X(grenade_helper_aim_color_rgba, Color) \
-    X(grenade_helper_save_token, Number)
+    X(grenade_helper_save_token, Number) \
+    X(grenade_helper_auto_throw, Toggle) \
+    X(bind_grenade_helper_throw, Bind) \
+    X(grenade_timer_rings, Toggle)

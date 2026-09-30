@@ -186,26 +186,48 @@ static void ReadWeapon(uintptr_t list, uintptr_t pawn, EspEntry& entry) {
 }
 
 static void UpdateSpectators(uintptr_t list, uintptr_t local_pawn) {
-    if (!list || !local_pawn || !off::m_pObserverServices || !off::m_hObserverTarget) {
+    if (!list || !local_pawn) {
         ClearSpectators();
         return;
     }
+    uintptr_t local_ctrl = game::LocalController();
+    uint32_t local_pawn_h = local_ctrl ? g_proc.Read<uint32_t>(local_ctrl + off::m_hPlayerPawn) : 0;
+    uint32_t local_idx = (local_pawn_h && local_pawn_h != 0xFFFFFFFF) ? (local_pawn_h & 0x7FFF) : 0;
+    uintptr_t obs_srv_off = off::m_pObserverServices ? off::m_pObserverServices : 0x1290;
+    uintptr_t obs_tgt_off = off::m_hObserverTarget ? off::m_hObserverTarget : 0x4C;
+
     std::vector<SpectatorEntry> out;
     out.reserve(16);
     for (int i = 1; i <= 64; i++) {
         uintptr_t controller = game::EntityFromList(list, i);
-        if (!controller) continue;
+        if (!controller || controller == local_ctrl) continue;
         uint32_t pawn_handle = g_proc.Read<uint32_t>(controller + off::m_hPlayerPawn);
-        uintptr_t pawn = game::EntityFromList(list, pawn_handle & 0x7FFF);
+        if (!pawn_handle || pawn_handle == 0xFFFFFFFF) continue;
+        uint32_t p_idx = pawn_handle & 0x7FFF;
+        if (p_idx == local_idx) continue;
+        uintptr_t pawn = game::EntityFromList(list, p_idx);
         if (!pawn || pawn == local_pawn) continue;
-        uintptr_t observer = g_proc.Read<uintptr_t>(pawn + off::m_pObserverServices);
-        uint32_t target_handle = observer ? g_proc.Read<uint32_t>(observer + off::m_hObserverTarget) : 0;
-        uintptr_t target = game::EntityFromList(list, target_handle & 0x7FFF);
-        if (target != local_pawn) continue;
-        SpectatorEntry entry{};
-        entry.team = game::Team(pawn);
-        ReadPlayerName(controller, entry.name);
-        if (entry.name[0]) out.push_back(entry);
+
+        uintptr_t observer = g_proc.Read<uintptr_t>(pawn + obs_srv_off);
+        if (!observer || observer < 0x10000 || observer > 0x7FFFFFFFFFFF) continue;
+
+        uint32_t target_handle = g_proc.Read<uint32_t>(observer + obs_tgt_off);
+        if (!target_handle || target_handle == 0xFFFFFFFF) continue;
+        uint32_t target_idx = target_handle & 0x7FFF;
+
+        bool is_spectating = (local_idx && target_idx == local_idx);
+        if (!is_spectating) {
+            uintptr_t target = game::EntityFromList(list, target_idx);
+            if (target && target == local_pawn) is_spectating = true;
+        }
+
+        if (is_spectating) {
+            SpectatorEntry entry{};
+            entry.team = game::Team(pawn);
+            if (!entry.team) entry.team = g_proc.Read<uint8_t>(controller + off::m_iTeamNum);
+            ReadPlayerName(controller, entry.name);
+            if (entry.name[0]) out.push_back(entry);
+        }
     }
     std::lock_guard<std::mutex> lock(g_hud.spectators_mtx);
     g_hud.spectators.swap(out);
@@ -219,7 +241,7 @@ static bool GrenadeKindFor(const char* name, GrenadeKind& kind) {
     if (!strcmp(name, "hegrenade_projectile")) kind = GrenadeKind::He;
     else if (!strcmp(name, "flashbang_projectile")) kind = GrenadeKind::Flash;
     else if (!strcmp(name, "smokegrenade_projectile")) kind = GrenadeKind::Smoke;
-    else if (!strcmp(name, "molotov_projectile") || !strcmp(name, "incendiary_projectile")) kind = GrenadeKind::Fire;
+    else if (!strcmp(name, "molotov_projectile") || !strcmp(name, "incendiary_projectile") || !strcmp(name, "inferno")) kind = GrenadeKind::Fire;
     else if (!strcmp(name, "decoy_projectile")) kind = GrenadeKind::Decoy;
     else return false;
     return true;
