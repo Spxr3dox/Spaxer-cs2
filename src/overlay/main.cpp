@@ -2503,10 +2503,25 @@ static void WriteBridgeFlags() {
     rename(tmp, dst);
 }
 
+static void CheckGrenadeToken() {
+    static int32_t last_token = -1;
+    if (!g_cfg) return;
+    int32_t cur_token = g_cfg->grenade_helper_save_token;
+    if (last_token < 0) {
+        last_token = cur_token;
+        return;
+    }
+    if (cur_token != last_token) {
+        last_token = cur_token;
+        grenade::AddCurrentSpot();
+    }
+}
+
 static void BridgeThread() {
     while (s_running.load()) {
         WriteBridgeFlags();
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        CheckGrenadeToken();
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 }
 
@@ -2561,9 +2576,11 @@ static void HotkeyThread() {
         if (!IsCs2Active()) {
             s_cursor_active.store(false);
             for (size_t i = 0; i < kCount; i++) prev[i] = false;
+            CheckGrenadeToken();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
+        CheckGrenadeToken();
         s_cursor_active.store(CheckCursorVisible(d));
 
         char keys[32]{};

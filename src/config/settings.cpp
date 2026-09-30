@@ -26,7 +26,7 @@ const char* Path() {
     return s_path;
 }
 
-static constexpr uint32_t kMigrationLevel = 22;
+static constexpr uint32_t kMigrationLevel = 23;
 
 static void DefaultEspExtras(Settings& s) {
     s.sound_esp_rgba = 0x00CCFFC0;
@@ -77,14 +77,14 @@ static void Migrate(Settings& s) {
         s.bind_auto_scope = 0;
         s.bind_long_jump = 0;
     }
-    if (s.migration_level < 22) {
+    if (s.migration_level < 23) {
         s.grenade_helper = 1;
         s.grenade_helper_only_held = 1;
         s.grenade_helper_draw_line = 1;
         s.grenade_helper_aim = 1;
         s.bind_grenade_helper_aim = 0;
-        s.bind_grenade_helper_save = 0;
-        s.bind_grenade_helper_remove = 0;
+        s.bind_grenade_helper_save = 0xffc3;
+        s.bind_grenade_helper_remove = 0xffc4;
         s.grenade_helper_spot_color_rgba = 0x4C8DFFC8;
         s.grenade_helper_active_color_rgba = 0x32DC64FF;
         s.grenade_helper_aim_color_rgba = 0xFFB400DC;
@@ -327,8 +327,8 @@ void Defaults(Settings& s) {
     s.grenade_helper_draw_line = 1;
     s.grenade_helper_aim = 1;
     s.bind_grenade_helper_aim = 0;
-    s.bind_grenade_helper_save = 0;
-    s.bind_grenade_helper_remove = 0;
+    s.bind_grenade_helper_save = 0xffc3;
+    s.bind_grenade_helper_remove = 0xffc4;
     s.grenade_helper_spot_color_rgba = 0x4C8DFFC8;
     s.grenade_helper_active_color_rgba = 0x32DC64FF;
     s.grenade_helper_aim_color_rgba = 0xFFB400DC;

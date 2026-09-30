@@ -13,6 +13,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <vector>
+#include <sys/stat.h>
 #include <linux/input.h>
 #include <gdk/gdkkeysyms.h>
 
@@ -165,7 +166,9 @@ static bool s_custom_loaded = false;
 
 static std::string LineupsFilePath() {
     const char* home = getenv("HOME");
-    return std::string(home ? home : "/tmp") + "/.config/spaxer/lineups.txt";
+    std::string dir = std::string(home ? home : "/tmp") + "/.config/spaxer";
+    mkdir(dir.c_str(), 0755);
+    return dir + "/lineups.txt";
 }
 
 }
@@ -213,10 +216,10 @@ std::vector<LineupSpot> GetLineupsForMap(const std::string& map) {
     if (!s_custom_loaded) LoadCustomLineups();
     std::vector<LineupSpot> result;
     for (const LineupSpot& spot : kBuiltinLineups) {
-        if (spot.map == map || map.empty()) result.push_back(spot);
+        if (map.empty() || spot.map == map || spot.map == "general") result.push_back(spot);
     }
     for (const LineupSpot& spot : s_custom_lineups) {
-        if (spot.map == map || map.empty()) result.push_back(spot);
+        if (map.empty() || spot.map == map || spot.map == "general") result.push_back(spot);
     }
     return result;
 }
@@ -276,9 +279,10 @@ bool AddCurrentSpot(const std::string& custom_name, ThrowType throw_type) {
     }
     std::string map = vis::CurrentMap();
     if (map.empty()) {
-        PushNotice("Not in map", NoticeKind::Off);
-        return false;
+        vis::Update();
+        map = vis::CurrentMap();
     }
+    if (map.empty()) map = "general";
     if (!s_custom_loaded) LoadCustomLineups();
     Vec3 pos = game::Origin(pawn);
     Vec3 ang = off::m_angEyeAngles ? g_proc.Read<Vec3>(pawn + off::m_angEyeAngles) : Vec3{};
@@ -295,14 +299,15 @@ bool AddCurrentSpot(const std::string& custom_name, ThrowType throw_type) {
 bool RemoveNearestSpot() {
     uintptr_t pawn = game::LocalPawn();
     if (!pawn) return false;
-    std::string map = vis::CurrentMap();
-    if (map.empty()) return false;
     if (!s_custom_loaded) LoadCustomLineups();
+    if (s_custom_lineups.empty()) {
+        PushNotice("No custom lineups to remove", NoticeKind::Off);
+        return false;
+    }
     Vec3 pos = game::Origin(pawn);
-    float nearest_dist = 250.f;
+    float nearest_dist = 500.f;
     int nearest_idx = -1;
     for (size_t i = 0; i < s_custom_lineups.size(); i++) {
-        if (s_custom_lineups[i].map != map) continue;
         float dx = s_custom_lineups[i].pos.x - pos.x;
         float dy = s_custom_lineups[i].pos.y - pos.y;
         float dz = s_custom_lineups[i].pos.z - pos.z;
@@ -783,7 +788,7 @@ static void HandleTokenAndHotkeys(const Settings& settings) {
 
 void Draw(cairo_t* cr, const render::Camera& camera, const Settings& settings) {
     HandleTokenAndHotkeys(settings);
-    if (!camera.valid || !vis::Ready()) return;
+    if (!camera.valid) return;
     cairo_save(cr);
     cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
