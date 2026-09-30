@@ -686,7 +686,6 @@ static void DrawLineups(cairo_t* cr, const render::Camera& camera, const Setting
     if (lineups.empty()) return;
 
     Vec3 my_pos = game::Origin(pawn);
-    Vec3 eye_pos = game::EyePosition(pawn);
     Vec3 cur_ang = off::m_angEyeAngles ? g_proc.Read<Vec3>(pawn + off::m_angEyeAngles) : camera.angles;
     float center_x = camera.width * 0.5f;
     float center_y = camera.height * 0.5f;
@@ -723,7 +722,9 @@ static void DrawLineups(cairo_t* cr, const render::Camera& camera, const Setting
         float d_yaw = NormAngle(lineup.yaw - cur_ang.y);
 
         Vec3 fwd = AngleToForward(lineup.pitch, lineup.yaw);
-        Vec3 target_world{eye_pos.x + fwd.x * 2000.f, eye_pos.y + fwd.y * 2000.f, eye_pos.z + fwd.z * 2000.f};
+        float eye_offset_z = (lineup.throw_type == ThrowType::Crouch) ? 46.0f : 64.0f;
+        Vec3 spot_eye{lineup.pos.x, lineup.pos.y, lineup.pos.z + eye_offset_z};
+        Vec3 target_world{spot_eye.x + fwd.x * 2000.f, spot_eye.y + fwd.y * 2000.f, spot_eye.z + fwd.z * 2000.f};
 
         float aim_sx = 0.f, aim_sy = 0.f;
         bool on_screen = camera.Project(target_world, aim_sx, aim_sy) &&
