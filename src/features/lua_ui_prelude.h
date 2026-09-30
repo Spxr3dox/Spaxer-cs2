@@ -6,6 +6,8 @@ local schema_path = home .. "/.config/spaxer/lua_ui.txt"
 local values_path = home .. "/.config/spaxer/lua_values.txt"
 local scripts_dir = client.script_dir()
 
+ui = ui or {}
+
 package.path = scripts_dir .. "/lib/?.lua;" .. scripts_dir .. "/lib/?/init.lua;" .. scripts_dir .. "/?.lua;" .. package.path
 
 local elements, order = {}, {}
@@ -203,7 +205,11 @@ local function create(kind, name, default, args, extra)
     element.value = decoders[kind](element.raw)
     elements[id] = element
     order[#order + 1] = element
-    schema_dirty = true
+    write_schema()
+    if values_dirty then
+        values_dirty = false
+        write_values()
+    end
     return element
 end
 

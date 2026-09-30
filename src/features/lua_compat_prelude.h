@@ -218,7 +218,7 @@ find_export = spx.find_export
 get_user_name = spx.user_name
 get_game_directory = spx.game_dir
 
-ui = {}
+ui = ui or {}
 function ui.is_menu_opened() return (spx.menu()) == true end
 function ui.get_menu_rect()
     local open, x, y, w, h = spx.menu()
