@@ -43,17 +43,24 @@ float Camera::PixelsPerUnit(const Vec3& p) const {
     return height * 0.5f / (depth * tan_half_v);
 }
 
-static bool MatrixAgrees(const Camera& camera) {
+static bool MatrixAgrees(const Camera& camera, const Vec3& eye_pos) {
     const Vec3 probes[] = {
-        {camera.eye.x + camera.forward.x * 800.f, camera.eye.y + camera.forward.y * 800.f, camera.eye.z + camera.forward.z * 800.f},
-        {camera.eye.x + camera.forward.x * 800.f + camera.right.x * 300.f + camera.up.x * 200.f,
-         camera.eye.y + camera.forward.y * 800.f + camera.right.y * 300.f + camera.up.y * 200.f,
-         camera.eye.z + camera.forward.z * 800.f + camera.right.z * 300.f + camera.up.z * 200.f},
+        {eye_pos.x + camera.forward.x * 800.f, eye_pos.y + camera.forward.y * 800.f, eye_pos.z + camera.forward.z * 800.f},
+        {eye_pos.x + camera.forward.x * 800.f + camera.right.x * 300.f + camera.up.x * 200.f,
+         eye_pos.y + camera.forward.y * 800.f + camera.right.y * 300.f + camera.up.y * 200.f,
+         eye_pos.z + camera.forward.z * 800.f + camera.right.z * 300.f + camera.up.z * 200.f},
     };
-    float tolerance = camera.width * 0.04f;
+    float tolerance = camera.width * 0.15f;
     for (const Vec3& probe : probes) {
         float ax, ay, mx, my;
-        if (!camera.ProjectAngles(probe, ax, ay) || !camera.ProjectMatrix(probe, mx, my)) return false;
+        Vec3 d{probe.x - eye_pos.x, probe.y - eye_pos.y, probe.z - eye_pos.z};
+        float depth = d.x * camera.forward.x + d.y * camera.forward.y + d.z * camera.forward.z;
+        if (depth < 1.f) return false;
+        float along_right = d.x * camera.right.x + d.y * camera.right.y + d.z * camera.right.z;
+        float along_up = d.x * camera.up.x + d.y * camera.up.y + d.z * camera.up.z;
+        ax = camera.width * 0.5f * (1.f + along_right / (depth * camera.tan_half_h));
+        ay = camera.height * 0.5f * (1.f - along_up / (depth * camera.tan_half_v));
+        if (!camera.ProjectMatrix(probe, mx, my)) return false;
         if (std::fabs(ax - mx) > tolerance || std::fabs(ay - my) > tolerance) return false;
     }
     return true;
@@ -66,7 +73,8 @@ Camera ReadCamera(int width, int height, float lead_seconds) {
     uintptr_t pawn = game::LocalPawn();
     if (!pawn || !off::m_angEyeAngles || width <= 0 || height <= 0) return camera;
 
-    camera.eye = game::EyePosition(pawn);
+    Vec3 raw_eye = game::EyePosition(pawn);
+    camera.eye = raw_eye;
     if (lead_seconds > 0.f && off::m_vecVelocity) {
         Vec3 velocity = g_proc.Read<Vec3>(pawn + off::m_vecVelocity);
         if (std::isfinite(velocity.x) && std::isfinite(velocity.y) && std::isfinite(velocity.z)) {
@@ -100,12 +108,10 @@ Camera ReadCamera(int width, int height, float lead_seconds) {
         g_proc.ReadBytes(off::g_ClientBase + off::dwViewMatrix, camera.matrix, sizeof(camera.matrix))) {
         bool finite = true;
         for (float value : camera.matrix) finite = finite && std::isfinite(value);
-        camera.use_matrix = finite && MatrixAgrees(camera);
+        camera.use_matrix = finite && MatrixAgrees(camera, raw_eye);
     }
     static float s_matrix_tan_h = 0.f, s_matrix_tan_v = 0.f;
-    static int s_matrix_misses = 0;
     if (camera.use_matrix) {
-        s_matrix_misses = 0;
         const float* m = camera.matrix;
         float right_len = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
         float up_len = std::sqrt(m[4] * m[4] + m[5] * m[5] + m[6] * m[6]);
@@ -113,9 +119,6 @@ Camera ReadCamera(int width, int height, float lead_seconds) {
             s_matrix_tan_h = 1.f / right_len;
             s_matrix_tan_v = 1.f / up_len;
         }
-    } else if (off::dwViewMatrix && ++s_matrix_misses > 300) {
-        off::dwViewMatrix = 0;
-        s_matrix_misses = 0;
     }
     if (s_matrix_tan_h > 0.f && fov >= 80.f) {
         camera.tan_half_h = s_matrix_tan_h;
