@@ -1702,33 +1702,7 @@ static GtkWidget* BuildGui() {
         AddSidebarHeader(sidebar, "COMBAT");
         AddSidebarItemSvg(sidebar, s_svg_legit.c_str(), "legit", "Legit bot");
     }
-    {
-        GtkWidget* page = MakePage();
 
-        GtkWidget* rage = MakeCard("RAGEBOT");
-        gtk_box_pack_start(GTK_BOX(rage), MakeRow("Silent aim", &g_cfg->silent_aim, &g_cfg->bind_silent_aim), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(rage), MakeRow("Auto fire", &g_cfg->rage_auto_fire, &g_cfg->bind_rage_auto_fire), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(rage), MakeRow("Auto scope", &g_cfg->auto_scope, &g_cfg->bind_auto_scope), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(rage), MakeRow("Auto pistol", &g_cfg->auto_pistol, nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(rage), MakeRow("Through walls", &g_cfg->aimbot_thru_walls, nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(rage), MakeRow("Autowall", &g_cfg->autowall, nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(rage), MakeFovSliderRow("Silent FOV", &g_cfg->aimbot_fov_x100), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(rage), MakeSliderRow("Hitchance %", &g_cfg->trigger_hitchance, 0, 100, 1), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(rage), MakeCheckSliderRow("Min damage", &g_cfg->min_damage_enabled, &g_cfg->autowall_min_damage, 1, 100, 1), FALSE, FALSE, 0);
-        Place(page, rage, false);
-
-        GtkWidget* target_card = MakeCard("TARGET SELECTION");
-        gtk_box_pack_start(GTK_BOX(target_card), MakeComboRow("Target priority", &g_cfg->aimbot_target_mode, {"Crosshair", "Distance", "Lowest HP"}), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(target_card), MakeRow("Head only", &g_cfg->aimbot_point_head, nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(target_card), MakeRow("Neck", &g_cfg->aimbot_point_neck, nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(target_card), MakeRow("Chest", &g_cfg->aimbot_point_chest, nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(target_card), MakeRow("Pelvis", &g_cfg->aimbot_point_pelvis, nullptr), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(target_card), MakeRow("AimLock", &g_cfg->aimbot_lock, nullptr), FALSE, FALSE, 0);
-        Place(page, target_card, true);
-
-        gtk_stack_add_named(GTK_STACK(g_stack), page, "rage");
-        AddSidebarItemSvg(sidebar, s_svg_rage.c_str(), "rage", "Rage bot");
-    }
     {
         GtkWidget* page = MakePage();
         GtkWidget* bhop = MakeCard("BUNNY HOP");
@@ -1897,12 +1871,7 @@ static GtkWidget* BuildGui() {
         gtk_box_pack_start(GTK_BOX(misc), MakeRow("Auto pickup", &g_cfg->auto_pickup, nullptr), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(misc), MakeRow("Damage log", &g_cfg->damage_log, nullptr), FALSE, FALSE, 0);
         Place(page, misc, true);
-        GtkWidget* internal_card = MakeCard("INTERNAL MODULES");
-        gtk_box_pack_start(GTK_BOX(internal_card), MakeRow("Silent aim",      &g_cfg->silent_aim, &g_cfg->bind_silent_aim), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(internal_card), MakeRow("Thirdperson",     &g_cfg->thirdperson_internal, &g_cfg->bind_thirdperson_internal), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(internal_card), MakeRow("Night mode",      &g_cfg->night_mode_internal,  &g_cfg->bind_night_mode_internal), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(internal_card), MakeRow("Anti aim",        &g_cfg->anti_aim,             &g_cfg->bind_anti_aim), FALSE, FALSE, 0);
-        Place(page, internal_card, true);
+
 
         GtkWidget* sound = MakeCard("HIT SOUND");
         gtk_box_pack_start(GTK_BOX(sound), MakeComboRow("Hit sound", &g_cfg->hit_sound, {"Off", "Click", "Ding", "Bell", "Pop"}), FALSE, FALSE, 0);
