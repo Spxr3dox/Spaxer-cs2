@@ -548,22 +548,10 @@ void DrawThrown(cairo_t* cr, const render::Camera& camera, int local_team, const
         return std::none_of(grenades.begin(), grenades.end(), [&](const ThrownGrenade& g) { return g.entity == entry.first; });
     });
     for (const ThrownGrenade& grenade : grenades) {
-        if (grenade.kind == GrenadeKind::Smoke) {
-            bool did_smoke = off::m_bDidSmokeEffect && g_proc.Read<uint8_t>(grenade.entity + off::m_bDidSmokeEffect);
-            if (did_smoke) {
-                Vec3 origin = game::Origin(grenade.entity);
-                if (std::isfinite(origin.x) && origin.x != 0.f) {
-                    active_zones.try_emplace(grenade.entity, ActiveZone{origin, now, 20.0f, GrenadeKind::Smoke, grenade.team});
-                }
-                continue;
-            }
-        }
         Vec3 pos = game::Origin(grenade.entity);
+        if (!std::isfinite(pos.x) || (pos.x == 0.f && pos.y == 0.f && pos.z == 0.f)) continue;
+
         Vec3 vel = off::m_vecVelocity ? g_proc.Read<Vec3>(grenade.entity + off::m_vecVelocity) : Vec3{};
-        if (!std::isfinite(pos.x) || !std::isfinite(vel.x)) continue;
-        if (grenade.kind == GrenadeKind::Fire && std::hypot(vel.x, vel.y, vel.z) < kMovingSpeed) {
-            active_zones.try_emplace(grenade.entity, ActiveZone{pos, now, 7.0f, GrenadeKind::Fire, grenade.team});
-        }
         auto [sample, inserted] = samples.try_emplace(grenade.entity, Sample{pos, now, {}});
         double dt = now - sample->second.time;
         if (!inserted && dt > 0.005) {
@@ -572,11 +560,30 @@ void DrawThrown(cairo_t* cr, const render::Camera& camera, int local_team, const
             sample->second = {pos, now, moved};
         }
         if (std::hypot(vel.x, vel.y, vel.z) < kMovingSpeed) vel = sample->second.velocity;
-        if (std::hypot(vel.x, vel.y, vel.z) < kMovingSpeed) continue;
-        float time_left = FuseFor(grenade.kind) - static_cast<float>(now - grenade.seen_at);
-        if (time_left <= 0.f) continue;
-        const Style& style = local_team && grenade.team == local_team ? kFriendlyStyle : kEnemyStyle;
-        DrawPath(cr, camera, Fly(pos, vel, grenade.kind, time_left), grenade.kind, style);
+        float speed = std::hypot(vel.x, vel.y, vel.z);
+
+        if (grenade.kind == GrenadeKind::Smoke) {
+            uintptr_t smoke_eff_off = off::m_bDidSmokeEffect ? off::m_bDidSmokeEffect : 0x1174;
+            bool did_smoke = g_proc.Read<uint8_t>(grenade.entity + smoke_eff_off) != 0;
+            if (did_smoke || speed < kMovingSpeed) {
+                active_zones.try_emplace(grenade.entity, ActiveZone{pos, now, 20.0f, GrenadeKind::Smoke, grenade.team});
+            }
+            if (did_smoke) continue;
+        } else if (grenade.kind == GrenadeKind::Fire) {
+            if (speed < kMovingSpeed) {
+                active_zones.try_emplace(grenade.entity, ActiveZone{pos, now, 7.0f, GrenadeKind::Fire, grenade.team});
+            }
+        }
+
+        if (speed < kMovingSpeed) continue;
+
+        if (settings::Enabled(settings.grenade_world)) {
+            float time_left = FuseFor(grenade.kind) - static_cast<float>(now - grenade.seen_at);
+            if (time_left > 0.f) {
+                const Style& style = local_team && grenade.team == local_team ? kFriendlyStyle : kEnemyStyle;
+                DrawPath(cr, camera, Fly(pos, vel, grenade.kind, time_left), grenade.kind, style);
+            }
+        }
     }
     std::erase_if(active_zones, [&](const auto& entry) {
         return (now - entry.second.start_time) >= entry.second.duration;
@@ -937,7 +944,8 @@ void Draw(cairo_t* cr, const render::Camera& camera, const Settings& settings) {
     cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
     uintptr_t pawn = game::LocalPawn();
-    if (settings::Enabled(settings.grenade_world)) DrawThrown(cr, camera, pawn ? game::Team(pawn) : 0, settings);
+    if (settings::Enabled(settings.grenade_world) || settings::Enabled(settings.grenade_timer_rings))
+        DrawThrown(cr, camera, pawn ? game::Team(pawn) : 0, settings);
     GrenadeKind kind;
     if (settings::Enabled(settings.grenade_trajectory) && pawn && KindForWeapon(game::ActiveWeaponDefinitionIndex(pawn), kind))
         DrawPath(cr, camera, PredictOwnThrow(pawn, ViewForward(camera), kind), kind, kOwnStyle);
